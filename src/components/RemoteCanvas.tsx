@@ -253,7 +253,7 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border/70 bg-sidebar px-3">
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 bg-sidebar px-3" style={{ borderBottom: "1px solid var(--glass-divider)" }}>
         <div className="flex min-w-0 items-center gap-2">
           <span
             className={`state-dot ${ended ? "bg-ended" : size ? "bg-connected animate-pulse-subtle" : "bg-connecting animate-pulse-subtle"}`}
@@ -265,32 +265,32 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            className="inline-flex h-7 items-center rounded-md px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground active:scale-[0.98]"
+            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
             disabled={!size || !!ended}
             onClick={() => {
               queue({ type: "remoteRun" });
               canvas.current?.focus();
             }}
           >
-            <Rocket size={13} aria-hidden="true" className="me-1" />
+            <Rocket size={13} aria-hidden="true" />
             {t("session.winR")}
           </button>
           <button
             type="button"
-            className="inline-flex h-7 items-center rounded-md px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground active:scale-[0.98]"
+            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
             disabled={!size || !!ended || saving}
             onClick={() => void screenshot()}
           >
-            <Camera size={13} aria-hidden="true" className="me-1" />
+            <Camera size={13} aria-hidden="true" />
             {t("session.screenshot")}
           </button>
           <button
             ref={disconnectButton}
             type="button"
-            className="inline-flex h-7 items-center rounded-md px-2 text-[12px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground active:scale-[0.98]"
+            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
             onClick={() => onDisconnect(id, hasFrame.current)}
           >
-            <PlugZap size={13} aria-hidden="true" className="me-1" />
+            <PlugZap size={13} aria-hidden="true" />
             {size ? t("session.disconnect") : t("session.cancel")}
           </button>
         </div>
@@ -325,20 +325,12 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
               <p className="mt-1.5 break-words text-xs text-muted-foreground">{statusLine}</p>
               <div className="mt-4 flex items-center justify-center gap-2">
                 {tab.profileId !== undefined && (
-                  <button
-                    type="button"
-                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/60 bg-primary/90 px-3 text-xs font-medium text-primary-foreground hover:bg-primary active:scale-[0.98] dark:bg-primary/80"
-                    onClick={() => onReconnect(tab)}
-                  >
+                  <button type="button" className="btn-primary" onClick={() => onReconnect(tab)}>
                     <RefreshCw size={13} aria-hidden="true" />
                     {t("session.reconnectButton")}
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium hover:bg-accent active:scale-[0.98]"
-                  onClick={() => onDisconnect(id, hasFrame.current)}
-                >
+                <button type="button" className="btn-outline" onClick={() => onDisconnect(id, hasFrame.current)}>
                   {t("tabs.close")}
                 </button>
               </div>
@@ -346,7 +338,7 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
           </div>
         )}
       </div>
-      <footer className="flex h-9 shrink-0 items-center justify-between gap-2 border-t border-border/70 bg-sidebar px-3">
+      <footer className="flex h-9 shrink-0 items-center justify-between gap-2 bg-sidebar px-3" style={{ borderTop: "1px solid var(--glass-divider)" }}>
         <form
           className="flex w-[380px] max-w-[65%] items-center gap-2"
           onSubmit={sendText}
@@ -359,11 +351,11 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
             maxLength={64}
             disabled={!size || !!ended}
             autoComplete="off"
-            className="h-7 w-full rounded-md border border-input bg-transparent px-2.5 text-xs placeholder:text-muted-foreground"
+            className="field !h-7"
           />
           <button
             type="submit"
-            className="inline-flex h-7 shrink-0 items-center rounded-md border border-border px-2.5 text-[12px] font-medium hover:bg-accent active:scale-[0.98]"
+            className="btn-outline !h-7 shrink-0"
             disabled={!size || !!ended || !text}
           >
             {t("session.send")}

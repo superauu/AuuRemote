@@ -4,9 +4,6 @@ import { useI18n } from "../i18n";
 
 export type VaultDialogMode = "create" | "unlock" | "change";
 
-const inputClass =
-  "h-8 w-full rounded-md border border-input bg-sunken px-2.5 text-xs placeholder:text-muted-foreground";
-
 export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }: {
   mode: VaultDialogMode;
   pending: boolean;
@@ -55,7 +52,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
             <label className="flex flex-col gap-1.5 text-xs font-medium">
               {t("vault.oldPassword")}
               <input
-                className={inputClass}
+                className="field"
                 type="password"
                 value={oldPassword}
                 onChange={(event) => setOldPassword(event.target.value)}
@@ -68,7 +65,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
             {mode === "change" ? t("vault.newPassword") : t("vault.masterPassword")}
             <input
               ref={first}
-              className={inputClass}
+              className="field"
               type="password"
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
@@ -80,7 +77,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
             <label className="flex flex-col gap-1.5 text-xs font-medium">
               {t("vault.confirmPassword")}
               <input
-                className={inputClass}
+                className="field"
                 type="password"
                 value={confirm}
                 onChange={(event) => {

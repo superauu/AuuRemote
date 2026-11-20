@@ -1,19 +1,25 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { MonitorUp } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { MasterPasswordDialog, type VaultDialogMode } from "./components/MasterPasswordDialog";
+import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { RemoteCanvas } from "./components/RemoteCanvas";
 import { StatusBar } from "./components/StatusBar";
 import { TabStrip } from "./components/TabStrip";
 import { Toolbar } from "./components/Toolbar";
 import { asApiError, describeError } from "./errors";
 import { type TranslationKey, useI18n } from "./i18n";
+import { usePanelWidth } from "./usePanelWidth";
 import { blankDraft, targetAddress, type BusyState, type Draft, type Notice, type Profile, type Tab, type VaultStatus } from "./types";
 
 const desktop = isTauri();
 
 type ConnectTarget = { host: string; port: number; username: string; fingerprint: string };
+
+const CONNECTIONS_PANEL = { key: "auu_remote_panel_connections", fallback: 232, min: 190, max: 420 } as const;
+const CONFIG_PANEL = { key: "auu_remote_panel_config", fallback: 324, min: 280, max: 520 } as const;
 
 export function App() {
   const { t } = useI18n();
@@ -32,6 +38,12 @@ export function App() {
   const [busy, setBusy] = useState<BusyState>();
   const [notice, setNotice] = useState<Notice>();
   const pendingSave = useRef<{ profileId: number; password: string } | undefined>(undefined);
+  const [connectionsWidth, setConnectionsWidth] = usePanelWidth(
+    CONNECTIONS_PANEL.key, CONNECTIONS_PANEL.fallback, CONNECTIONS_PANEL.min, CONNECTIONS_PANEL.max,
+  );
+  const [configWidth, setConfigWidth] = usePanelWidth(
+    CONFIG_PANEL.key, CONFIG_PANEL.fallback, CONFIG_PANEL.min, CONFIG_PANEL.max,
+  );
 
   const selected = profiles.find((profile) => profile.id === selectedId);
   const validDetails = !!draft.host.trim() && !!draft.username.trim() &&
@@ -276,6 +288,16 @@ export function App() {
           onQuery={setQuery}
           onSelect={selectProfile}
           onNew={() => selectProfile()}
+          width={connectionsWidth}
+        />
+        <PanelResizeHandle
+          label={t("panel.resize.connections")}
+          value={connectionsWidth}
+          min={CONNECTIONS_PANEL.min}
+          max={CONNECTIONS_PANEL.max}
+          defaultValue={CONNECTIONS_PANEL.fallback}
+          side="left"
+          onChange={setConnectionsWidth}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <TabStrip tabs={tabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} />
@@ -286,12 +308,30 @@ export function App() {
               </div>
             ))}
             {tabs.length === 0 && (
-              <div className="absolute inset-0 grid place-items-center">
-                <p className="max-w-[300px] text-center text-xs text-muted-foreground">{t("tabs.noTabs")}</p>
+              <div className="absolute inset-0 grid place-items-center p-6">
+                <div className="flex flex-col items-center text-center animate-fade-in">
+                  <span className="empty-tile" aria-hidden="true">
+                    <MonitorUp size={26} />
+                  </span>
+                  <h2 className="mt-4 text-sm font-semibold">{t("empty.title")}</h2>
+                  <p className="mt-1.5 max-w-[320px] text-xs text-muted-foreground">{t("empty.hint")}</p>
+                  <button type="button" className="btn-primary mt-4" onClick={() => selectProfile()}>
+                    {t("toolbar.newConnection")}
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </div>
+        <PanelResizeHandle
+          label={t("panel.resize.config")}
+          value={configWidth}
+          min={CONFIG_PANEL.min}
+          max={CONFIG_PANEL.max}
+          defaultValue={CONFIG_PANEL.fallback}
+          side="right"
+          onChange={setConfigWidth}
+        />
         <ConfigPanel
           draft={draft}
           password={password}
@@ -307,6 +347,7 @@ export function App() {
           onConnect={(event) => void connect(event)}
           onSave={() => void save()}
           onRemove={() => void remove()}
+          width={configWidth}
         />
       </div>
       <StatusBar sessionCount={tabs.length} vault={vault} />
