@@ -4,11 +4,12 @@ use std::{
 };
 
 use ironrdp::{
+    cliprdr::{CliprdrClient, backend::ClipboardMessage},
     connector::{ClientConnector, Config, ConnectionResult, Credentials, DesktopSize},
     graphics::image_processing::PixelFormat,
     input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations},
     pdu::{gcc::KeyboardType, rdp::capability_sets::MajorPlatformType},
-    session::{ActiveStageBuilder, ActiveStageOutput, image::DecodedImage},
+    session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, image::DecodedImage},
 };
 use ironrdp_tls::{CertificateValidationCallback, TlsStream};
 use ironrdp_tokio::{FramedWrite, TokioFramed, reqwest::ReqwestNetworkClient};
@@ -24,10 +25,12 @@ pub(super) async fn run(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
     mut input: mpsc::Receiver<Vec<Input>>,
+    cliprdr_factory: Option<super::clipboard::SharedCliprdrFactory>,
+    mut clipboard_rx: mpsc::UnboundedReceiver<ClipboardMessage>,
     view: &Mutex<View>,
 ) -> Result<(), ApiError> {
     let (result, mut stream) =
-        time::timeout(Duration::from_secs(25), connect(connection, fingerprint))
+        time::timeout(Duration::from_secs(25), connect(connection, fingerprint, cliprdr_factory))
             .await
             .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
     view.lock().expect("view lock").established = true;
@@ -54,6 +57,9 @@ pub(super) async fn run(
     let mut keys = Database::new();
     let mut tick = time::interval(Duration::from_millis(33));
     tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    let mut cliprdr_sweep = time::interval(Duration::from_secs(5));
+    cliprdr_sweep.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    cliprdr_sweep.tick().await; // consume the immediate first tick
     let first_frame = time::sleep(Duration::from_secs(30));
     tokio::pin!(first_frame);
     let mut dirty = false;
@@ -78,6 +84,19 @@ pub(super) async fn run(
                     }
                 }
                 output
+            }
+            message = async {
+                match clipboard_rx.recv().await {
+                    Some(message) => message,
+                    // Channel closed (clipboard unsupported): park this branch
+                    // forever instead of ending the session.
+                    None => std::future::pending::<ClipboardMessage>().await,
+                }
+            } => {
+                handle_clipboard_message(&mut stage, message)
+            }
+            _ = cliprdr_sweep.tick() => {
+                sweep_cliprdr_timeouts(&mut stage)
             }
             _ = tick.tick() => {
                 if dirty {
@@ -121,6 +140,67 @@ pub(super) async fn run(
     }
 }
 
+/// Clipboard actions from the OS pump thread (or tests) → CLIPRDR PDUs.
+/// Failures are logged, never fatal: clipboard is auxiliary to the session.
+fn handle_clipboard_message(
+    stage: &mut ActiveStage,
+    message: ClipboardMessage,
+) -> Vec<ActiveStageOutput> {
+    let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+        return Vec::new();
+    };
+    let outcome = match message {
+        ClipboardMessage::SendInitiateCopy(formats) => cliprdr.initiate_copy(&formats).map(Some),
+        ClipboardMessage::SendInitiatePaste(format) => cliprdr.initiate_paste(format).map(Some),
+        ClipboardMessage::SendFormatData(response) => cliprdr.submit_format_data(response).map(Some),
+        ClipboardMessage::SendInitiateFileCopy(files) => cliprdr.initiate_file_copy(files).map(Some),
+        ClipboardMessage::SendFileContentsRequest(request) => {
+            cliprdr.request_file_contents(request).map(Some)
+        }
+        ClipboardMessage::SendFileContentsResponse(response) => {
+            cliprdr.submit_file_contents(response).map(Some)
+        }
+        ClipboardMessage::Error(error) => {
+            eprintln!("cliprdr: backend error ({error})");
+            Ok(None)
+        }
+    };
+    match outcome {
+        Ok(Some(messages)) => match stage.process_svc_processor_messages(messages) {
+            Ok(frame) => vec![ActiveStageOutput::ResponseFrame(frame)],
+            Err(error) => {
+                eprintln!("cliprdr: encode failed ({error})");
+                Vec::new()
+            }
+        },
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            eprintln!("cliprdr: action failed ({error})");
+            Vec::new()
+        }
+    }
+}
+
+/// Drives cliprdr lock-expiry bookkeeping every few seconds.
+fn sweep_cliprdr_timeouts(stage: &mut ActiveStage) -> Vec<ActiveStageOutput> {
+    let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+        return Vec::new();
+    };
+    match cliprdr.drive_timeouts() {
+        Ok(messages) => match stage.process_svc_processor_messages(messages) {
+            Ok(frame) => vec![ActiveStageOutput::ResponseFrame(frame)],
+            Err(error) => {
+                eprintln!("cliprdr: sweep encode failed ({error})");
+                Vec::new()
+            }
+        },
+        Err(error) => {
+            eprintln!("cliprdr: sweep failed ({error})");
+            Vec::new()
+        }
+    }
+}
+
 fn make_frame(image: &DecodedImage, revision: u32) -> Frame {
     let (width, height) = (image.width(), image.height());
     let mut wire = Vec::with_capacity(8 + image.data().len());
@@ -143,6 +223,7 @@ fn make_frame(image: &DecodedImage, revision: u32) -> Frame {
 async fn connect(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
+    cliprdr_factory: Option<super::clipboard::SharedCliprdrFactory>,
 ) -> Result<(ConnectionResult, RdpStream), ApiError> {
     let Connection {
         endpoint:
@@ -168,6 +249,13 @@ async fn connect(
         None => (None, username),
     };
     let mut connector = ClientConnector::new(client_config(username, password, domain), local);
+    if let Some(factory) = &cliprdr_factory {
+        let backend = factory
+            .lock()
+            .expect("cliprdr factory")
+            .build_cliprdr_backend();
+        connector.attach_static_channel(CliprdrClient::new(backend));
+    }
     let upgrade = ironrdp_tokio::connect_begin(&mut stream, &mut connector)
         .await
         .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "RDP 协商失败"))?;

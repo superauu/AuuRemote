@@ -16,15 +16,39 @@ use crate::errors::{ApiError, ErrorCode};
 
 #[cfg(test)]
 mod tests;
+mod clipboard;
 mod transport;
 
-#[derive(Default)]
 pub(crate) struct Sessions {
     next_id: AtomicU32,
     active: Mutex<HashMap<u32, Session>>,
+    clipboard: clipboard::ClipboardBridge,
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self {
+            next_id: AtomicU32::new(0),
+            active: Mutex::new(HashMap::new()),
+            clipboard: clipboard::ClipboardBridge::default(),
+        }
+    }
+}
+
+impl Sessions {
+    /// Production constructor: spawns the OS clipboard pump thread so every
+    /// session syncs with the local clipboard.
+    pub(crate) fn with_clipboard_pump() -> Self {
+        Self {
+            clipboard: clipboard::ClipboardBridge::with_pump(),
+            ..Self::default()
+        }
+    }
 }
 
 struct Session {
+    id: u32,
+    sinks: clipboard::Sinks,
     view: Arc<Mutex<View>>,
     input: mpsc::Sender<Vec<Input>>,
     worker: JoinHandle<()>,
@@ -33,6 +57,10 @@ struct Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.worker.abort();
+        self.sinks
+            .lock()
+            .expect("clipboard sinks")
+            .retain(|(id, _)| *id != self.id);
     }
 }
 
@@ -206,10 +234,14 @@ pub(crate) fn rdp_connect(
     sessions: State<'_, Sessions>,
     connection: Connection,
 ) -> Result<u32, ApiError> {
-    start_session(&sessions, connection)
+    start_session(&sessions, connection, |id| sessions.clipboard.link(id))
 }
 
-fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32, ApiError> {
+fn start_session(
+    sessions: &Sessions,
+    mut connection: Connection,
+    make_link: impl FnOnce(u32) -> clipboard::ClipboardLink,
+) -> Result<u32, ApiError> {
     let fingerprint = connection.endpoint.validate()?;
     if connection.password.is_empty() {
         return Err(ApiError::new(
@@ -219,11 +251,13 @@ fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32,
     }
     let mut active = sessions.active.lock().expect("session lock");
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    let clipboard = make_link(id);
+    let clipboard::ClipboardLink { factory, rx } = clipboard;
     let view = Arc::new(Mutex::new(View::default()));
     let (input, receiver) = mpsc::channel(32);
     let worker_view = view.clone();
     let worker = tauri::async_runtime::spawn(async move {
-        let result = transport::run(connection, fingerprint, receiver, &worker_view).await;
+        let result = transport::run(connection, fingerprint, receiver, factory, rx, &worker_view).await;
         let mut view = worker_view.lock().expect("view lock");
         view.frame = None;
         view.error = Some(match result {
@@ -234,6 +268,8 @@ fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32,
     active.insert(
         id,
         Session {
+            id,
+            sinks: sessions.clipboard.sinks.clone(),
             view,
             input,
             worker,

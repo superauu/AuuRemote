@@ -13,7 +13,7 @@ anyhow = "1"
 argon2 = "0.5"
 base64 = "0.22"
 getrandom = "0.3"
-ironrdp = { version = "0.17", features = ["connector", "graphics", "input", "session"] }
+ironrdp = { version = "0.17", features = ["cliprdr", "connector", "graphics", "input", "session"] }
 ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 png = "0.18"
@@ -25,6 +25,10 @@ tauri-plugin-dialog = "2"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 zeroize = "1"
+
+[target.'cfg(windows)'.dependencies]
+ironrdp-cliprdr-native = "0.7"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 async-trait = "0.1"

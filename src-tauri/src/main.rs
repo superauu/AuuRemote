@@ -9,7 +9,7 @@ mod vault;
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(rdp::Sessions::default())
+        .manage(rdp::Sessions::with_clipboard_pump())
         .manage(vault::Vault::default())
         .invoke_handler(tauri::generate_handler![
             rdp::rdp_connect,
