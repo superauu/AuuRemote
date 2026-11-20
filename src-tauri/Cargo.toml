@@ -1,0 +1,27 @@
+[package]
+name = "auuremote"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+ironrdp = { version = "0.17", features = ["connector", "graphics", "input", "session"] }
+ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
+ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tauri = { version = "~2.12.0", features = [] }
+tauri-plugin-dialog = "2"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+ironrdp-server = { version = "0.13", default-features = false }
+rcgen = { version = "0.14", default-features = false, features = ["ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
