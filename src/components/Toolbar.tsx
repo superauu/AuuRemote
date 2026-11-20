@@ -1,4 +1,4 @@
-import { KeyRound, Languages, LockKeyhole, LockOpen, Monitor, Moon, Plus, Sun } from "lucide-react";
+import { KeyRound, Languages, LockKeyhole, LockOpen, Monitor, Moon, Sun } from "lucide-react";
 import { setLanguage, useI18n } from "../i18n";
 import { setTheme, type ThemeMode, useTheme } from "../theme";
 import type { VaultStatus } from "../types";
@@ -11,9 +11,8 @@ function ThemeIcon({ mode }: { mode: ThemeMode }) {
   return <Moon size={14} aria-hidden="true" />;
 }
 
-export function Toolbar({ vault, onNewConnection, onOpenVault }: {
+export function Toolbar({ vault, onOpenVault }: {
   vault?: VaultStatus;
-  onNewConnection: () => void;
   onOpenVault: () => void;
 }) {
   const { lang, t } = useI18n();
@@ -29,11 +28,6 @@ export function Toolbar({ vault, onNewConnection, onOpenVault }: {
         <Monitor size={13} strokeWidth={2.2} />
       </span>
       <span className="brand-mark select-none">AuuRemote</span>
-      <span className="mx-1 h-4 w-px bg-border" aria-hidden="true" />
-      <button type="button" className="btn-primary !h-7" onClick={onNewConnection}>
-        <Plus size={13} aria-hidden="true" />
-        {t("toolbar.newConnection")}
-      </button>
       <div className="ms-auto flex items-center gap-1">
         <button
           type="button"

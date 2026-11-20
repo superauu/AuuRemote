@@ -278,7 +278,7 @@ export function App() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <Toolbar vault={vault} onNewConnection={() => selectProfile()} onOpenVault={openVault} />
+      <Toolbar vault={vault} onOpenVault={openVault} />
       <div className="flex min-h-0 flex-1">
         <ConnectionPanel
           profiles={profiles}
