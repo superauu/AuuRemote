@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::IpAddr,
     sync::{
         Arc, Mutex,
@@ -11,6 +12,8 @@ use tauri::{AppHandle, State, async_runtime::JoinHandle, ipc::Response};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::mpsc;
 
+use crate::errors::{ApiError, ErrorCode};
+
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -18,11 +21,10 @@ mod transport;
 #[derive(Default)]
 pub(crate) struct Sessions {
     next_id: AtomicU32,
-    active: Mutex<Option<Session>>,
+    active: Mutex<HashMap<u32, Session>>,
 }
 
 struct Session {
-    id: u32,
     view: Arc<Mutex<View>>,
     input: mpsc::Sender<Vec<Input>>,
     worker: JoinHandle<()>,
@@ -38,7 +40,7 @@ impl Drop for Session {
 struct View {
     established: bool,
     frame: Option<Arc<Frame>>,
-    error: Option<String>,
+    error: Option<ApiError>,
 }
 
 #[derive(Serialize)]
@@ -47,14 +49,15 @@ pub(crate) enum Status {
     Connecting,
     WaitingForFrame,
     Ready,
-    Ended { message: String },
+    Ended { code: ErrorCode, detail: String },
 }
 
 impl View {
     fn status(&self) -> Status {
-        if let Some(message) = &self.error {
+        if let Some(error) = &self.error {
             Status::Ended {
-                message: message.clone(),
+                code: error.code,
+                detail: error.detail.clone(),
             }
         } else if self.frame.is_some() {
             Status::Ready
@@ -104,7 +107,7 @@ pub(crate) struct Endpoint {
 }
 
 impl Endpoint {
-    pub(crate) fn validate(&mut self) -> Result<Option<[u8; 32]>, String> {
+    pub(crate) fn validate(&mut self) -> Result<Option<[u8; 32]>, ApiError> {
         let host = self.host.trim();
         self.host = host
             .strip_prefix('[')
@@ -112,11 +115,17 @@ impl Endpoint {
             .unwrap_or(host)
             .to_owned();
         if self.port == 0 || !valid_host(&self.host) {
-            return Err("请输入有效的主机名或 IP，端口需单独填写。".into());
+            return Err(ApiError::new(
+                ErrorCode::InvalidEndpoint,
+                "请输入有效的主机名或 IP，端口需单独填写。",
+            ));
         }
         self.username = self.username.trim().to_owned();
         if self.username.is_empty() {
-            return Err("请输入远端用户名。".into());
+            return Err(ApiError::new(
+                ErrorCode::InvalidUsername,
+                "请输入远端用户名。",
+            ));
         }
         let fingerprint = parse_fingerprint(&self.fingerprint)?;
         self.fingerprint = fingerprint.map_or_else(String::new, |bytes| format_fingerprint(&bytes));
@@ -162,34 +171,33 @@ impl Sessions {
     fn get<R>(
         &self,
         id: u32,
-        read: impl FnOnce(&Session) -> Result<R, String>,
-    ) -> Result<R, String> {
+        read: impl FnOnce(&Session) -> Result<R, ApiError>,
+    ) -> Result<R, ApiError> {
         let active = self.active.lock().expect("session lock");
         let session = active
-            .as_ref()
-            .filter(|session| session.id == id)
-            .ok_or("此会话已关闭。")?;
+            .get(&id)
+            .ok_or_else(|| ApiError::new(ErrorCode::SessionClosed, "此会话已关闭。"))?;
         read(session)
     }
 
-    fn frame(&self, id: u32) -> Result<Option<Arc<Frame>>, String> {
+    fn frame(&self, id: u32) -> Result<Option<Arc<Frame>>, ApiError> {
         self.get(id, |session| {
             let view = session.view.lock().expect("view lock");
             if let Some(error) = &view.error {
                 return Err(error.clone());
             }
             if session.worker.inner().is_finished() {
-                return Err("RDP 会话意外结束。".into());
+                return Err(ApiError::new(
+                    ErrorCode::SessionClosed,
+                    "RDP 会话意外结束。",
+                ));
             }
             Ok(view.frame.clone())
         })
     }
 
     fn disconnect(&self, id: u32) {
-        let mut active = self.active.lock().expect("session lock");
-        if active.as_ref().is_some_and(|session| session.id == id) {
-            active.take();
-        }
+        self.active.lock().expect("session lock").remove(&id);
     }
 }
 
@@ -197,25 +205,20 @@ impl Sessions {
 pub(crate) fn rdp_connect(
     sessions: State<'_, Sessions>,
     connection: Connection,
-) -> Result<u32, String> {
+) -> Result<u32, ApiError> {
     start_session(&sessions, connection)
 }
 
-fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32, String> {
+fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32, ApiError> {
     let fingerprint = connection.endpoint.validate()?;
     if connection.password.is_empty() {
-        return Err("请输入远端密码。".into());
+        return Err(ApiError::new(
+            ErrorCode::PasswordRequired,
+            "请输入远端密码。",
+        ));
     }
     let mut active = sessions.active.lock().expect("session lock");
-    if active.is_some() {
-        return Err("请先断开当前会话。".into());
-    }
-    let id = sessions
-        .next_id
-        .load(Ordering::Relaxed)
-        .checked_add(1)
-        .ok_or("请重启应用后重新连接。")?;
-    sessions.next_id.store(id, Ordering::Relaxed);
+    let id = sessions.next_id.fetch_add(1, Ordering::Relaxed) + 1;
     let view = Arc::new(Mutex::new(View::default()));
     let (input, receiver) = mpsc::channel(32);
     let worker_view = view.clone();
@@ -224,27 +227,30 @@ fn start_session(sessions: &Sessions, mut connection: Connection) -> Result<u32,
         let mut view = worker_view.lock().expect("view lock");
         view.frame = None;
         view.error = Some(match result {
-            Ok(()) => "远程会话已断开。".to_owned(),
-            Err(error) => format!("{error:#}"),
+            Ok(()) => ApiError::new(ErrorCode::ConnectionFailed, "远程会话已断开。"),
+            Err(error) => error,
         });
     });
-    *active = Some(Session {
+    active.insert(
         id,
-        view,
-        input,
-        worker,
-    });
+        Session {
+            view,
+            input,
+            worker,
+        },
+    );
     Ok(id)
 }
 
 #[tauri::command]
-pub(crate) fn rdp_status(sessions: State<'_, Sessions>, id: u32) -> Result<Status, String> {
+pub(crate) fn rdp_status(sessions: State<'_, Sessions>, id: u32) -> Result<Status, ApiError> {
     sessions.get(id, |session| {
         let view = session.view.lock().expect("view lock");
         let status = view.status();
         if !matches!(status, Status::Ended { .. }) && session.worker.inner().is_finished() {
             return Ok(Status::Ended {
-                message: "RDP 会话意外结束。".into(),
+                code: ErrorCode::SessionClosed,
+                detail: "RDP 会话意外结束。".into(),
             });
         }
         Ok(status)
@@ -256,7 +262,7 @@ pub(crate) fn rdp_frame(
     sessions: State<'_, Sessions>,
     id: u32,
     after: u32,
-) -> Result<Response, String> {
+) -> Result<Response, ApiError> {
     let wire = sessions
         .frame(id)?
         .filter(|frame| frame.revision != after)
@@ -269,22 +275,25 @@ pub(crate) fn rdp_input(
     sessions: State<'_, Sessions>,
     id: u32,
     events: Vec<Input>,
-) -> Result<(), String> {
+) -> Result<(), ApiError> {
     if events.len() > 64
         || events
             .iter()
             .any(|event| matches!(event, Input::Text { text } if text.len() > 256))
     {
-        return Err("输入批次过大。".into());
+        return Err(ApiError::new(ErrorCode::SendTooLarge, "输入批次过大。"));
     }
     sessions.get(id, |session| {
         if session.view.lock().expect("view lock").frame.is_none() {
-            return Err("会话尚无可操作画面。".into());
+            return Err(ApiError::new(
+                ErrorCode::NoFrame,
+                "会话尚无可操作画面。",
+            ));
         }
         session
             .input
             .try_send(events)
-            .map_err(|_| "会话无法接收输入。".to_owned())
+            .map_err(|_| ApiError::new(ErrorCode::SessionClosed, "会话无法接收输入。"))
     })
 }
 
@@ -298,8 +307,10 @@ pub(crate) async fn rdp_screenshot(
     app: AppHandle,
     sessions: State<'_, Sessions>,
     id: u32,
-) -> Result<bool, String> {
-    let frame = sessions.frame(id)?.ok_or("尚未收到远端画面。")?;
+) -> Result<bool, ApiError> {
+    let frame = sessions
+        .frame(id)?
+        .ok_or_else(|| ApiError::new(ErrorCode::NoFrame, "尚未收到远端画面。"))?;
     tauri::async_runtime::spawn_blocking(move || {
         let Some(path) = app
             .dialog()
@@ -310,13 +321,18 @@ pub(crate) async fn rdp_screenshot(
         else {
             return Ok(false);
         };
-        let path = path.into_path().map_err(|error| error.to_string())?;
-        let bytes = frame.png().map_err(|error| error.to_string())?;
-        std::fs::write(path, bytes).map_err(|error| format!("无法保存截图。{error}"))?;
+        let path = path
+            .into_path()
+            .map_err(|error| ApiError::chain(ErrorCode::IoError, &error, "无法保存截图"))?;
+        let bytes = frame
+            .png()
+            .map_err(|error| ApiError::chain(ErrorCode::IoError, &error, "无法保存截图"))?;
+        std::fs::write(path, bytes)
+            .map_err(|error| ApiError::chain(ErrorCode::IoError, &error, "无法保存截图"))?;
         Ok(true)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| ApiError::chain(ErrorCode::Internal, &error, "截图任务失败"))?
 }
 
 fn valid_host(host: &str) -> bool {
@@ -336,7 +352,7 @@ fn valid_host(host: &str) -> bool {
         })
 }
 
-fn parse_fingerprint(value: &str) -> Result<Option<[u8; 32]>, String> {
+fn parse_fingerprint(value: &str) -> Result<Option<[u8; 32]>, ApiError> {
     if value.trim().is_empty() {
         return Ok(None);
     }
@@ -345,7 +361,10 @@ fn parse_fingerprint(value: &str) -> Result<Option<[u8; 32]>, String> {
         .filter(|c| !c.is_ascii_whitespace() && *c != ':')
         .collect();
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("请输入 64 位十六进制 SHA-256 证书指纹。".into());
+        return Err(ApiError::new(
+            ErrorCode::InvalidFingerprint,
+            "请输入 64 位十六进制 SHA-256 证书指纹。",
+        ));
     }
     let mut result = [0; 32];
     for (pos, byte) in result.iter_mut().enumerate() {

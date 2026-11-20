@@ -1,14 +1,16 @@
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufReader},
-    path::Path,
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
+
+use crate::{
+    errors::{ApiError, ErrorCode},
+    rdp::Endpoint,
+    store::{config_directory, read_json_file, with_file_lock, write_json_file},
 };
 
-use anyhow::{Context, ensure};
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
-
-use crate::rdp::Endpoint;
+const DATA_NAME: &str = "connections.json";
+const LOCK_NAME: &str = "connections.lock";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub(crate) struct Details {
@@ -32,25 +34,31 @@ struct Profiles {
 }
 
 impl Profiles {
-    fn save(&mut self, id: Option<u32>, mut details: Details) -> anyhow::Result<u32> {
+    fn save(&mut self, id: Option<u32>, mut details: Details) -> Result<u32, ApiError> {
         details.name = details.name.trim().to_owned();
-        ensure!(
-            !details.name.is_empty() && details.name.chars().count() <= 80,
-            "连接名称须为 1 至 80 个字符。"
-        );
-        details.endpoint.validate().map_err(anyhow::Error::msg)?;
+        if details.name.is_empty() || details.name.chars().count() > 80 {
+            return Err(ApiError::new(
+                ErrorCode::InvalidProfileName,
+                "连接名称须为 1 至 80 个字符。",
+            ));
+        }
+        details.endpoint.validate()?;
 
         if let Some(id) = id {
             let profile = self
                 .entries
                 .iter_mut()
                 .find(|profile| profile.id == id)
-                .context("这条连接已被删除。")?;
+                .ok_or_else(|| {
+                    ApiError::new(ErrorCode::ProfileMissing, "这条连接已被删除。")
+                })?;
             profile.details = details;
             return Ok(id);
         }
 
-        let id = self.last_id.checked_add(1).context("连接编号已用完。")?;
+        let id = self.last_id.checked_add(1).ok_or_else(|| {
+            ApiError::new(ErrorCode::Internal, "连接编号已用完。")
+        })?;
         self.entries.push(Profile { id, details });
         self.last_id = id;
         Ok(id)
@@ -59,56 +67,31 @@ impl Profiles {
 
 fn update_store<T>(
     directory: &Path,
-    operation: impl FnOnce(&mut Profiles) -> anyhow::Result<(T, bool)>,
-) -> anyhow::Result<T> {
-    fs::create_dir_all(directory).context("无法创建连接配置目录")?;
+    operation: impl FnOnce(&mut Profiles) -> Result<(T, bool), ApiError>,
+) -> Result<T, ApiError> {
+    with_file_lock(directory, LOCK_NAME, || {
+        let mut profiles = read_json_file::<Profiles>(&directory.join(DATA_NAME))?.unwrap_or_default();
 
-    // Serialize reads and modifications across app instances. The lock is
-    // separate from the data file, which is replaced after each write.
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(directory.join("connections.lock"))
-        .context("无法打开连接配置锁")?;
-    lock.lock().context("无法锁定连接配置")?;
-
-    let path = directory.join("connections.json");
-    let mut profiles = match File::open(&path) {
-        Ok(file) => serde_json::from_reader(BufReader::new(file)).context("连接配置无法读取")?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Profiles::default(),
-        Err(error) => return Err(error).context("无法打开连接配置"),
-    };
-
-    let (result, changed) = operation(&mut profiles)?;
-    if changed {
-        let mut temp =
-            tempfile::NamedTempFile::new_in(directory).context("无法创建连接配置临时文件")?;
-        serde_json::to_writer_pretty(temp.as_file_mut(), &profiles).context("无法写入连接配置")?;
-        temp.as_file().sync_all().context("无法同步连接配置")?;
-        temp.persist(path).context("无法替换连接配置")?;
-    }
-    Ok(result)
+        let (result, changed) = operation(&mut profiles)?;
+        if changed {
+            write_json_file(&directory.join(DATA_NAME), &profiles)?;
+        }
+        Ok(result)
+    })
 }
 
 async fn with_store<T: Send + 'static>(
     app: AppHandle,
-    operation: impl FnOnce(&mut Profiles) -> anyhow::Result<(T, bool)> + Send + 'static,
-) -> Result<T, String> {
-    let directory = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| format!("无法找到应用配置目录。{error}"))?;
-    tauri::async_runtime::spawn_blocking(move || {
-        update_store(&directory, operation).map_err(|error| format!("{error:#}"))
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    operation: impl FnOnce(&mut Profiles) -> Result<(T, bool), ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    let directory = config_directory(&app)?;
+    tauri::async_runtime::spawn_blocking(move || update_store(&directory, operation))
+        .await
+        .map_err(|error| ApiError::chain(ErrorCode::Internal, &error, "连接配置任务失败"))?
 }
 
 #[tauri::command]
-pub(crate) async fn list_profiles(app: AppHandle) -> Result<Vec<Profile>, String> {
+pub(crate) async fn list_profiles(app: AppHandle) -> Result<Vec<Profile>, ApiError> {
     with_store(app, |store| Ok((store.entries.clone(), false))).await
 }
 
@@ -123,7 +106,7 @@ pub(crate) async fn save_profile(
     app: AppHandle,
     id: Option<u32>,
     details: Details,
-) -> Result<Saved, String> {
+) -> Result<Saved, ApiError> {
     with_store(app, move |store| {
         let id = store.save(id, details)?;
         // Return the same snapshot that was persisted.
@@ -139,7 +122,7 @@ pub(crate) async fn save_profile(
 }
 
 #[tauri::command]
-pub(crate) async fn remove_profile(app: AppHandle, id: u32) -> Result<Vec<Profile>, String> {
+pub(crate) async fn remove_profile(app: AppHandle, id: u32) -> Result<Vec<Profile>, ApiError> {
     with_store(app, move |store| {
         let before = store.entries.len();
         store.entries.retain(|profile| profile.id != id);
@@ -207,15 +190,15 @@ mod tests {
         }"#,
         )?;
         update_store(dir.path(), |store| Ok((store.save(None, details)?, true)))?;
-        let path = dir.path().join("connections.json");
-        let json = fs::read_to_string(&path)?;
+        let path = dir.path().join(DATA_NAME);
+        let json = std::fs::read_to_string(&path)?;
         assert!(!json.contains("password") && !json.contains("fixture-only"));
-        fs::write(&path, b"{ damaged")?;
+        std::fs::write(&path, b"{ damaged")?;
         let result = update_store(dir.path(), |store| {
             Ok((store.save(None, fixture("New"))?, true))
         });
         assert!(result.is_err());
-        assert_eq!(fs::read_to_string(&path)?, "{ damaged");
+        assert_eq!(std::fs::read_to_string(&path)?, "{ damaged");
         Ok(())
     }
 

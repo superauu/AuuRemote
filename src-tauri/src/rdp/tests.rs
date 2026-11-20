@@ -142,7 +142,7 @@ async fn verify_loopback() -> anyhow::Result<()> {
         loop {
             match view.lock().unwrap().status() {
                 Status::WaitingForFrame => break Ok(()),
-                Status::Ended { message } => break Err(anyhow::Error::msg(message)),
+                Status::Ended { detail, .. } => break Err(anyhow::Error::msg(detail)),
                 _ => {}
             }
             time::sleep(Duration::from_millis(10)).await;

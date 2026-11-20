@@ -3,7 +3,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, bail, ensure};
 use ironrdp::{
     connector::{ClientConnector, Config, ConnectionResult, Credentials, DesktopSize},
     graphics::image_processing::PixelFormat,
@@ -17,6 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::{net::TcpStream, sync::mpsc, time};
 
 use super::{Connection, Endpoint, Frame, Input, View, format_fingerprint};
+use crate::errors::{ApiError, ErrorCode};
 
 type RdpStream = TokioFramed<TlsStream<TcpStream>>;
 
@@ -25,18 +25,20 @@ pub(super) async fn run(
     fingerprint: Option<[u8; 32]>,
     mut input: mpsc::Receiver<Vec<Input>>,
     view: &Mutex<View>,
-) -> anyhow::Result<()> {
+) -> Result<(), ApiError> {
     let (result, mut stream) =
         time::timeout(Duration::from_secs(25), connect(connection, fingerprint))
             .await
-            .context("RDP 连接超时")??;
+            .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
     view.lock().expect("view lock").established = true;
 
     let DesktopSize { width, height } = result.desktop_size;
-    ensure!(
-        width > 0 && height > 0 && width <= 4096 && height <= 2160,
-        "远端分辨率超出原型范围。"
-    );
+    if !(width > 0 && height > 0 && width <= 4096 && height <= 2160) {
+        return Err(ApiError::new(
+            ErrorCode::ResolutionUnsupported,
+            "远端分辨率超出原型范围。",
+        ));
+    }
     let mut image = DecodedImage::new(PixelFormat::RgbA32, width, height);
     let mut stage = ActiveStageBuilder {
         static_channels: result.static_channels,
@@ -60,8 +62,10 @@ pub(super) async fn run(
     loop {
         let output = tokio::select! {
             received = stream.read_pdu() => {
-                let (action, bytes) = received.context("读取远端画面失败")?;
-                stage.process(&mut image, action, &bytes).context("解码远端画面失败")?
+                let (action, bytes) = received
+                    .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "读取远端画面失败"))?;
+                stage.process(&mut image, action, &bytes)
+                    .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "解码远端画面失败"))?
             }
             received = input.recv() => {
                 let Some(batch) = received else { return Ok(()); };
@@ -69,7 +73,8 @@ pub(super) async fn run(
                 for event in batch {
                     let events = input_events(&mut keys, event, width, height);
                     for chunk in events.chunks(64) {
-                        output.extend(stage.process_fastpath_input(&mut image, chunk).context("编码远端输入失败")?);
+                        output.extend(stage.process_fastpath_input(&mut image, chunk)
+                            .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "编码远端输入失败"))?);
                     }
                 }
                 output
@@ -83,7 +88,10 @@ pub(super) async fn run(
                 }
                 continue;
             }
-            _ = &mut first_frame, if revision == 0 => bail!("RDP 已建立，但未收到远端桌面画面。"),
+            _ = &mut first_frame, if revision == 0 => return Err(ApiError::new(
+                ErrorCode::ConnectionFailed,
+                "RDP 已建立，但未收到远端桌面画面。",
+            )),
         };
 
         for event in output {
@@ -91,14 +99,22 @@ pub(super) async fn run(
                 ActiveStageOutput::ResponseFrame(frame) if !frame.is_empty() => {
                     time::timeout(Duration::from_secs(10), stream.write_all(&frame))
                         .await
-                        .context("发送 RDP 数据超时")?
-                        .context("发送 RDP 数据失败")?;
+                        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "发送 RDP 数据超时"))?
+                        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "发送 RDP 数据失败"))?;
                 }
                 ActiveStageOutput::GraphicsUpdate(_) => dirty = true,
                 ActiveStageOutput::Terminate(reason) => {
-                    bail!("远端已断开。{}", reason.description())
+                    return Err(ApiError::new(
+                        ErrorCode::ConnectionFailed,
+                        format!("远端已断开。{}", reason.description()),
+                    ));
                 }
-                ActiveStageOutput::DeactivateAll => bail!("远端已停用或更改桌面，请重新连接。"),
+                ActiveStageOutput::DeactivateAll => {
+                    return Err(ApiError::new(
+                        ErrorCode::ConnectionFailed,
+                        "远端已停用或更改桌面，请重新连接。",
+                    ));
+                }
                 _ => {}
             }
         }
@@ -127,7 +143,7 @@ fn make_frame(image: &DecodedImage, revision: u32) -> Frame {
 async fn connect(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
-) -> anyhow::Result<(ConnectionResult, RdpStream)> {
+) -> Result<(ConnectionResult, RdpStream), ApiError> {
     let Connection {
         endpoint:
             Endpoint {
@@ -140,9 +156,12 @@ async fn connect(
     } = connection;
     let tcp = TcpStream::connect((host.as_str(), port))
         .await
-        .context("无法连接 RDP 主机")?;
-    tcp.set_nodelay(true)?;
-    let local = tcp.local_addr()?;
+        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "无法连接 RDP 主机"))?;
+    tcp.set_nodelay(true)
+        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "无法配置 TCP 连接"))?;
+    let local = tcp
+        .local_addr()
+        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "无法读取本机地址"))?;
     let mut stream = TokioFramed::new(tcp);
     let (domain, username) = match username.split_once('\\') {
         Some((domain, user)) => (Some(domain.to_owned()), user.to_owned()),
@@ -151,9 +170,14 @@ async fn connect(
     let mut connector = ClientConnector::new(client_config(username, password, domain), local);
     let upgrade = ironrdp_tokio::connect_begin(&mut stream, &mut connector)
         .await
-        .context("RDP 协商失败")?;
+        .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "RDP 协商失败"))?;
     let (tcp, remainder) = stream.into_inner();
-    ensure!(remainder.is_empty(), "RDP 服务器提前发送了 TLS 数据。");
+    if !remainder.is_empty() {
+        return Err(ApiError::new(
+            ErrorCode::ConnectionFailed,
+            "RDP 服务器提前发送了 TLS 数据。",
+        ));
+    }
 
     let presented = Arc::new(Mutex::new(None));
     let observed = presented.clone();
@@ -174,11 +198,14 @@ async fn connect(
         Err(error) => {
             if let Some(digest) = *presented.lock().expect("certificate lock") {
                 let hex = format_fingerprint(&digest);
-                bail!(
-                    "无法验证远端证书。服务端提交的 SHA-256 指纹为 {hex}。请从可信渠道核对后再填写指纹。"
-                );
+                return Err(ApiError::new(
+                    ErrorCode::CertificateMismatch,
+                    format!(
+                        "无法验证远端证书。服务端提交的 SHA-256 指纹为 {hex}。请从可信渠道核对后再填写指纹。"
+                    ),
+                ));
             }
-            return Err(error).context("RDP TLS 握手失败");
+            return Err(ApiError::chain(ErrorCode::ConnectionFailed, &error, "RDP TLS 握手失败"));
         }
     };
     if let Some(expected) = fingerprint {
@@ -187,12 +214,17 @@ async fn connect(
             .1
             .peer_certificates()
             .and_then(|chain| chain.first())
-            .context("没有收到远端叶证书")?;
+            .ok_or_else(|| ApiError::new(ErrorCode::ConnectionFailed, "没有收到远端叶证书"))?;
         let actual: [u8; 32] = Sha256::digest(leaf.as_ref()).into();
-        ensure!(actual == expected, "远端证书与指定指纹不匹配。");
+        if actual != expected {
+            return Err(ApiError::new(
+                ErrorCode::CertificateMismatch,
+                "远端证书与指定指纹不匹配。",
+            ));
+        }
     }
     let public_key = ironrdp_tls::extract_tls_server_public_key(&certificate)
-        .context("无法读取远端证书公钥")?
+        .ok_or_else(|| ApiError::new(ErrorCode::ConnectionFailed, "无法读取远端证书公钥"))?
         .to_vec();
     let upgraded = ironrdp_tokio::mark_as_upgraded(upgrade, &mut connector);
     let mut stream = TokioFramed::new(stream);
@@ -206,7 +238,9 @@ async fn connect(
         None,
     )
     .await
-    .context("RDP 登录或桌面初始化失败")?;
+    .map_err(|error| {
+        ApiError::chain(ErrorCode::ConnectionFailed, &error, "RDP 登录或桌面初始化失败")
+    })?;
     Ok((result, stream))
 }
 

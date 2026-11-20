@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "AuuRemote",
-        "width": 980,
-        "height": 650,
-        "minWidth": 560,
-        "minHeight": 500
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640
       }
     ],
     "security": {

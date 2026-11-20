@@ -8,7 +8,11 @@ license = "GPL-3.0-only"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+aes-gcm = "0.10"
 anyhow = "1"
+argon2 = "0.5"
+base64 = "0.22"
+getrandom = "0.3"
 ironrdp = { version = "0.17", features = ["connector", "graphics", "input", "session"] }
 ironrdp-tls = { version = "0.3", features = ["rustls-ring"] }
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
@@ -20,6 +24,7 @@ tauri = { version = "~2.12.0", features = [] }
 tauri-plugin-dialog = "2"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
+zeroize = "1"
 
 [dev-dependencies]
 async-trait = "0.1"
