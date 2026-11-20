@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { KeyRound } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { describeError } from "../errors";
 import { useI18n } from "../i18n";
 
@@ -12,14 +13,22 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const dialog = useRef<HTMLDialogElement>(null);
   const first = useRef<HTMLInputElement>(null);
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [confirmMismatch, setConfirmMismatch] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    const previousFocus = document.activeElement;
+    element.showModal();
     first.current?.focus();
+    return () => {
+      element.close();
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+    };
   }, []);
 
   const titleKey = mode === "create" ? "vault.createTitle" : mode === "unlock" ? "vault.unlockTitle" : "vault.changeTitle";
@@ -37,21 +46,29 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
   }
 
   return (
-    <div className="dialog-scrim fixed inset-0 z-50 grid place-items-center p-4" onClick={onClose}>
-      <div
-        className="dialog-card w-full max-w-[380px] p-5 animate-fade-in"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t(titleKey)}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="text-sm font-semibold">{t(titleKey)}</h2>
-        <p className="mt-1 text-xs text-muted-foreground">{t(descriptionKey)}</p>
+    <dialog
+      ref={dialog}
+      className="dialog-card vault-dialog animate-fade-in"
+      aria-labelledby="vault-title"
+      aria-describedby="vault-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!pending) onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !pending) onClose();
+      }}
+    >
+      <div className="p-5">
+        <span className="vault-icon" aria-hidden="true"><KeyRound size={18} /></span>
+        <h2 id="vault-title" className="mt-3 text-base font-semibold">{t(titleKey)}</h2>
+        <p id="vault-description" className="mt-1 text-xs leading-[18px] text-muted-foreground">{t(descriptionKey)}</p>
         <form onSubmit={submit} className="mt-4 flex flex-col gap-3" autoComplete="off">
           {mode === "change" && (
             <label className="flex flex-col gap-1.5 text-xs font-medium">
               {t("vault.oldPassword")}
               <input
+                ref={first}
                 className="field"
                 type="password"
                 value={oldPassword}
@@ -64,7 +81,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
           <label className="flex flex-col gap-1.5 text-xs font-medium">
             {mode === "change" ? t("vault.newPassword") : t("vault.masterPassword")}
             <input
-              ref={first}
+              ref={mode !== "change" ? first : undefined}
               className="field"
               type="password"
               value={newPassword}
@@ -97,7 +114,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
           <div className="mt-1 flex items-center justify-end gap-2">
             <button
               type="button"
-              className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium hover:bg-accent active:scale-[0.98]"
+              className="btn-outline"
               onClick={onClose}
               disabled={pending}
             >
@@ -105,7 +122,7 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
             </button>
             <button
               type="submit"
-              className="inline-flex h-8 items-center rounded-md border border-primary/60 bg-primary/90 px-3 text-xs font-medium text-primary-foreground hover:bg-primary active:scale-[0.98] dark:bg-primary/80"
+              className="btn-primary"
               disabled={pending}
             >
               {t(submitKey)}
@@ -113,6 +130,6 @@ export function MasterPasswordDialog({ mode, pending, error, onSubmit, onClose }
           </div>
         </form>
       </div>
-    </div>
+    </dialog>
   );
 }

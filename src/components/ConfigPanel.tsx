@@ -1,19 +1,19 @@
-import { ChevronDown, Eye, EyeOff, Plug, Save, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronRight, Eye, EyeOff, KeyRound, Plug, Save, Server, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { type ReactNode, type Ref, useState } from "react";
 import { extractFingerprint } from "../errors";
 import { useI18n } from "../i18n";
-import { targetAddress, type BusyState, type Draft, type Notice } from "../types";
+import type { BusyState, Draft, Notice } from "../types";
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({ label, icon, children }: { label: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2">
-      <span className="field-caption">{label}</span>
+    <section className="config-section" aria-label={label}>
+      <h3 className="section-heading">{icon}{label}</h3>
       {children}
-    </div>
+    </section>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5 text-xs font-medium">
       {label}
@@ -22,7 +22,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export function ConfigPanel({ draft, password, remember, selected, busy, desktop, notice, validDetails, onDraftChange, onPasswordChange, onRememberChange, onConnect, onSave, onRemove, width }: {
+export function ConfigPanel({ open, onClose, hostField, draft, password, remember, selected, busy, desktop, notice, validDetails, onDraftChange, onPasswordChange, onRememberChange, onConnect, onSave, onRemove, width }: {
+  open: boolean;
+  onClose: () => void;
+  hostField: Ref<HTMLInputElement>;
   draft: Draft;
   password: string;
   remember: boolean;
@@ -48,22 +51,23 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
 
   return (
     <section
-      className="flex flex-col overflow-hidden panel-surface"
-      style={{ width, borderLeft: "1px solid var(--glass-divider)" }}
-      aria-label={selected ? t("config.edit") : t("config.new")}
+      id="connection-config"
+      hidden={!open}
+      className="panel-surface flex shrink-0 flex-col overflow-hidden"
+      style={{ width }}
+      aria-labelledby="connection-config-title"
     >
       <div className="panel-header">
-        <span className="truncate">{selected ? t("config.edit") : t("config.new")}</span>
-        {selected && (
-          <span className="count-pill ms-auto max-w-[140px] truncate !normal-case" title={draft.name}>
-            {targetAddress(draft.host, draft.port)}
-          </span>
-        )}
+        <SlidersHorizontal size={14} className="shrink-0 text-muted-foreground" aria-hidden="true" />
+        <h2 id="connection-config-title" className="truncate">{selected ? t("config.edit") : t("config.new")}</h2>
+        <button type="button" className="icon-btn ms-auto" aria-label={t("config.hide")} title={t("config.hide")} onClick={onClose}>
+          <X size={15} aria-hidden="true" />
+        </button>
       </div>
       <form onSubmit={onConnect} className="flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <fieldset disabled={!!busy} className="flex flex-col gap-4">
-            <Section label={t("config.name")}>
+        <div className="config-body min-h-0 flex-1 overflow-y-auto">
+          <fieldset disabled={!!busy} className="config-fields flex min-w-0 flex-col">
+            <Field label={t("config.name")}>
               <input
                 className="field"
                 value={draft.name}
@@ -72,13 +76,14 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
                 maxLength={80}
                 autoComplete="off"
               />
-            </Section>
-            <Section label={t("config.section.server")}>
-              <div className="flex flex-col gap-2.5">
-                <div className="grid grid-cols-[minmax(0,1fr)_86px] gap-2">
+            </Field>
+            <Section label={t("config.section.server")} icon={<Server size={14} aria-hidden="true" />}>
+              <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_72px] gap-2">
                   <Field label={t("config.host")}>
                     <input
                       className="field"
+                      ref={hostField}
                       value={draft.host}
                       onChange={(event) => onDraftChange("host", event.target.value)}
                       placeholder={t("config.hostPlaceholder")}
@@ -112,11 +117,13 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
                 </Field>
               </div>
             </Section>
-            <Section label={t("config.section.credentials")}>
-              <Field label={t("config.password")}>
+            <Section label={t("config.section.credentials")} icon={<KeyRound size={14} aria-hidden="true" />}>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="connection-password" className="text-xs font-medium">{t("config.password")}</label>
                 <div className="relative">
                   <input
-                    className="field !pe-8 font-mono"
+                    id="connection-password"
+                    className={`field pe-9${showPassword ? " font-mono" : ""}`}
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(event) => onPasswordChange(event.target.value)}
@@ -125,16 +132,15 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
                   />
                   <button
                     type="button"
-                    className="icon-btn !absolute end-0.5 top-1/2 !h-6 !w-6 -translate-y-1/2"
+                    className="icon-btn absolute end-0.5 top-1/2 -translate-y-1/2"
                     title={showPassword ? t("config.hidePassword") : t("config.showPassword")}
                     aria-label={showPassword ? t("config.hidePassword") : t("config.showPassword")}
                     onClick={() => setShowPassword((current) => !current)}
-                    tabIndex={-1}
                   >
                     {showPassword ? <EyeOff size={13} aria-hidden="true" /> : <Eye size={13} aria-hidden="true" />}
                   </button>
                 </div>
-              </Field>
+              </div>
               <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
@@ -145,22 +151,23 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
                 {t("config.rememberPassword")}
               </label>
             </Section>
-            <Section label={t("config.certificate")}>
-              <details open={certificateOpen}>
-                <summary className="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-                  <ChevronDown size={12} aria-hidden="true" className="transition-transform [[open]>&]:rotate-180" />
-                  {t("config.fingerprint")}
-                </summary>
+            <details open={certificateOpen} className="certificate-section">
+              <summary className="section-heading">
+                <ShieldCheck size={14} aria-hidden="true" />
+                <span className="flex-1">{t("config.certificate")}</span>
+                <ChevronRight size={14} aria-hidden="true" className="certificate-chevron" />
+              </summary>
+              <Field label={t("config.fingerprint")}>
                 <input
-                  className="field mt-2 font-mono text-[11px]"
+                  className="field font-mono text-[11px]"
                   value={draft.fingerprint}
                   onChange={(event) => onDraftChange("fingerprint", event.target.value)}
                   placeholder={t("config.fingerprintPlaceholder")}
                   autoComplete="off"
                   spellCheck={false}
                 />
-              </details>
-            </Section>
+              </Field>
+            </details>
           </fieldset>
           {!desktop && <p className="mt-3 text-xs text-muted-foreground">{t("config.needsDesktop")}</p>}
           {notice && (
@@ -183,16 +190,13 @@ export function ConfigPanel({ draft, password, remember, selected, busy, desktop
             </div>
           )}
         </div>
-        <div
-          className="flex shrink-0 flex-col gap-2 p-3"
-          style={{ borderTop: "1px solid var(--glass-divider)" }}
-        >
-          <button type="submit" className="btn-primary w-full" disabled={!desktop || !validDetails || !password || busy === "connecting"}>
+        <div className="panel-actions">
+          <button type="submit" className="btn-primary w-full" disabled={!desktop || !validDetails || !password || !!busy}>
             <Plug size={13} aria-hidden="true" />
             {busy === "connecting" ? t("config.connecting") : t("config.connect")}
           </button>
           <div className="flex items-center gap-2">
-            <button type="button" className="btn-outline flex-1" onClick={onSave} disabled={!desktop || !validDetails}>
+            <button type="button" className="btn-outline flex-1" onClick={onSave} disabled={!desktop || !validDetails || !!busy}>
               <Save size={13} aria-hidden="true" />
               {busy === "saving" ? t("config.saving") : t("config.save")}
             </button>

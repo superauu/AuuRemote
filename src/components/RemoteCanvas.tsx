@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, Camera, PlugZap, RefreshCw, Rocket } from "lucide-react";
+import { AlertTriangle, Camera, LoaderCircle, PlugZap, RefreshCw, Rocket } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { describeError } from "../errors";
 import { useI18n } from "../i18n";
@@ -253,19 +253,21 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 bg-sidebar px-3" style={{ borderBottom: "1px solid var(--glass-divider)" }}>
+      <div className="session-toolbar flex h-10 shrink-0 items-center justify-between gap-2 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span
-            className={`state-dot ${ended ? "bg-ended" : size ? "bg-connected animate-pulse-subtle" : "bg-connecting animate-pulse-subtle"}`}
+            className={`state-dot ${ended ? "bg-ended" : size ? "bg-connected" : "bg-connecting animate-pulse-subtle"}`}
             aria-hidden="true"
           />
-          <strong className="truncate text-xs" title={target}>{target}</strong>
-          <span className="hidden truncate text-[11px] text-muted-foreground sm:block">{statusLine}</span>
+          <strong className="truncate font-mono text-xs font-medium" title={target}>{target}</strong>
+          <span className="session-status truncate text-xs text-muted-foreground" title={statusLine}>{statusLine}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
+            className="session-action"
+            title={t("session.winR")}
+            aria-label={t("session.winR")}
             disabled={!size || !!ended}
             onClick={() => {
               queue({ type: "remoteRun" });
@@ -273,25 +275,29 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
             }}
           >
             <Rocket size={13} aria-hidden="true" />
-            {t("session.winR")}
+            <span>{t("session.winR")}</span>
           </button>
           <button
             type="button"
-            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
+            className="session-action"
+            title={t("session.screenshot")}
+            aria-label={t("session.screenshot")}
             disabled={!size || !!ended || saving}
             onClick={() => void screenshot()}
           >
             <Camera size={13} aria-hidden="true" />
-            {t("session.screenshot")}
+            <span>{t("session.screenshot")}</span>
           </button>
           <button
             ref={disconnectButton}
             type="button"
-            className="btn-outline !h-7 !border-transparent !bg-transparent !px-2 text-muted-foreground hover:!text-foreground"
+            className="session-action"
+            title={size ? t("session.disconnect") : t("session.cancel")}
+            aria-label={size ? t("session.disconnect") : t("session.cancel")}
             onClick={() => onDisconnect(id, hasFrame.current)}
           >
             <PlugZap size={13} aria-hidden="true" />
-            {size ? t("session.disconnect") : t("session.cancel")}
+            <span>{size ? t("session.disconnect") : t("session.cancel")}</span>
           </button>
         </div>
       </div>
@@ -301,8 +307,7 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
           hidden={!size}
           tabIndex={0}
           aria-label={t("session.canvasLabel")}
-          className={`max-h-full max-w-full ${ended ? "opacity-40" : ""}`}
-          style={{ touchAction: "none" }}
+          className={`max-h-full max-w-full touch-none ${ended ? "opacity-40" : ""}`}
           onContextMenu={(event) => event.preventDefault()}
           onPointerMove={(event) => queue({ type: "move", ...toRemote(event.currentTarget, event.clientX, event.clientY) })}
           onPointerDown={(event) => button(event, true)}
@@ -313,15 +318,18 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
           onBlur={() => queue({ type: "releaseAll" })}
         />
         {!size && !ended && (
-          <p className="absolute inset-0 grid place-items-center text-xs text-muted-foreground" role="status">
-            {statusLine}
-          </p>
+          <div className="absolute inset-0 grid place-items-center p-4" role="status">
+            <div className="flex flex-col items-center gap-3 text-xs text-muted-foreground">
+              <LoaderCircle size={24} aria-hidden="true" className="animate-spin text-primary motion-reduce:animate-none" />
+              {statusLine}
+            </div>
+          </div>
         )}
         {ended && (
           <div className="absolute inset-0 grid place-items-center p-4">
             <div className="dialog-card w-full max-w-[430px] p-5 text-center animate-fade-in">
               <AlertTriangle size={22} aria-hidden="true" className="mx-auto text-ended" />
-              <h2 className="mt-2 text-sm font-semibold">{t("session.ended")}</h2>
+              <h2 className="mt-2 text-base font-semibold">{t("session.ended")}</h2>
               <p className="mt-1.5 break-words text-xs text-muted-foreground">{statusLine}</p>
               <div className="mt-4 flex items-center justify-center gap-2">
                 {tab.profileId !== undefined && (
@@ -338,9 +346,9 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
           </div>
         )}
       </div>
-      <footer className="flex h-9 shrink-0 items-center justify-between gap-2 bg-sidebar px-3" style={{ borderTop: "1px solid var(--glass-divider)" }}>
+      <footer className="session-footer flex h-10 shrink-0 items-center justify-between gap-2 px-3">
         <form
-          className="flex w-[380px] max-w-[65%] items-center gap-2"
+          className="flex w-[380px] min-w-0 items-center gap-2"
           onSubmit={sendText}
         >
           <input
@@ -361,7 +369,7 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
             {t("session.send")}
           </button>
         </form>
-        <span className="hidden truncate text-[11px] text-muted-foreground md:block" role="status">
+        <span className="session-hint truncate text-xs text-muted-foreground" data-capture={!!capture} role="status">
           {capture || t("session.hint")}
         </span>
       </footer>

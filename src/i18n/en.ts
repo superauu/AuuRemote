@@ -14,7 +14,8 @@ export const en: Record<keyof typeof zh, string> = {
   "toolbar.language": "Switch language",
 
   // Connection panel
-  "panel.connections": "Connections",
+  "panel.connections": "Saved connections",
+  "panel.count": "Saved connections: {count}",
   "panel.search": "Search connections",
   "panel.loading": "Loading connections…",
   "panel.empty": "Saved hosts will appear here.",
@@ -22,12 +23,15 @@ export const en: Record<keyof typeof zh, string> = {
   "panel.newConnection": "New connection",
   "panel.resize.connections": "Resize connections panel (double-click to reset)",
   "panel.resize.config": "Resize config panel (double-click to reset)",
-  "empty.title": "No open sessions",
-  "empty.hint": "Pick a saved connection on the left, or create a new one.",
+  "empty.title": "Remote desktop",
+  "empty.hint": "Choose a saved connection or enter a host to start a remote session.",
 
   // Config panel
-  "config.new": "Connect to a remote desktop",
+  "config.new": "New connection",
   "config.edit": "Connection settings",
+  "config.focus": "Configure connection",
+  "config.show": "Show connection settings",
+  "config.hide": "Hide connection settings",
   "config.section.server": "Server",
   "config.section.credentials": "Credentials",
   "config.name": "Connection name",
@@ -53,6 +57,7 @@ export const en: Record<keyof typeof zh, string> = {
   "config.needsDesktop": "Connecting and saving require the AuuRemote desktop app.",
 
   // Session tabs
+  "tabs.title": "Sessions",
   "tabs.close": "Close tab",
   "tabs.noTabs": "Sessions open as tabs once you connect.",
 

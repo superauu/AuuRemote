@@ -1,4 +1,4 @@
-import { HardDrive, KeyRound, LockKeyhole, LockOpen } from "lucide-react";
+import { KeyRound, LockKeyhole, LockOpen, Monitor } from "lucide-react";
 import { useI18n } from "../i18n";
 import type { VaultStatus } from "../types";
 
@@ -11,14 +11,13 @@ export function StatusBar({ sessionCount, vault }: {
   const VaultIcon = !vault?.setup ? KeyRound : vault.unlocked ? LockOpen : LockKeyhole;
 
   return (
-    <footer className="statusbar flex h-7 shrink-0 items-center gap-2 px-3 text-[12px] text-muted-foreground">
+    <footer className="statusbar flex h-7 shrink-0 items-center justify-between gap-2 px-3 text-xs text-muted-foreground">
       <span className="flex items-center gap-1.5">
-        <HardDrive size={12} aria-hidden="true" />
+        <Monitor size={13} aria-hidden="true" className={sessionCount > 0 ? "text-primary" : ""} />
         {sessionCount > 0 ? t("status.connections", { count: sessionCount }) : t("status.idle")}
       </span>
-      <span className="h-3 w-px bg-border" aria-hidden="true" />
       <span className="flex items-center gap-1.5">
-        <VaultIcon size={12} aria-hidden="true" />
+        <VaultIcon size={13} aria-hidden="true" className={vault?.unlocked ? "text-connected" : ""} />
         {t(vaultKey)}
       </span>
     </footer>

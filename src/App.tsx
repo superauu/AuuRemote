@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { MonitorUp } from "lucide-react";
+import { ArrowRight, MonitorUp } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ConfigPanel } from "./components/ConfigPanel";
@@ -18,8 +18,9 @@ const desktop = isTauri();
 
 type ConnectTarget = { host: string; port: number; username: string; fingerprint: string };
 
-const CONNECTIONS_PANEL = { key: "auu_remote_panel_connections", fallback: 232, min: 190, max: 420 } as const;
-const CONFIG_PANEL = { key: "auu_remote_panel_config", fallback: 324, min: 280, max: 520 } as const;
+const CONNECTIONS_PANEL = { key: "auu_remote_panel_connections", fallback: 224, min: 190, max: 420 } as const;
+const CONFIG_PANEL = { key: "auu_remote_panel_config", fallback: 320, min: 280, max: 520 } as const;
+const MIN_WORKSPACE_WIDTH = 400;
 
 export function App() {
   const { t } = useI18n();
@@ -37,6 +38,11 @@ export function App() {
   const [vaultError, setVaultError] = useState<unknown>();
   const [busy, setBusy] = useState<BusyState>();
   const [notice, setNotice] = useState<Notice>();
+  const [configOpen, setConfigOpen] = useState(true);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const configToggle = useRef<HTMLButtonElement>(null);
+  const hostField = useRef<HTMLInputElement>(null);
+  const focusHostOnOpen = useRef(false);
   const pendingSave = useRef<{ profileId: number; password: string } | undefined>(undefined);
   const [connectionsWidth, setConnectionsWidth] = usePanelWidth(
     CONNECTIONS_PANEL.key, CONNECTIONS_PANEL.fallback, CONNECTIONS_PANEL.min, CONNECTIONS_PANEL.max,
@@ -49,6 +55,30 @@ export function App() {
   const validDetails = !!draft.host.trim() && !!draft.username.trim() &&
     /^[0-9]+$/.test(draft.port) && Number(draft.port) > 0 && Number(draft.port) <= 65535;
   const openProfileIds = new Set(tabs.map((tab) => tab.profileId).filter((id) => id !== undefined));
+  const panelBudget = viewportWidth - MIN_WORKSPACE_WIDTH;
+  const visibleConfigWidth = Math.min(configWidth, Math.max(CONFIG_PANEL.min, panelBudget - CONNECTIONS_PANEL.min));
+  const maxConnectionsWidth = Math.min(CONNECTIONS_PANEL.max, Math.max(
+    CONNECTIONS_PANEL.min, panelBudget - (configOpen ? visibleConfigWidth : 0),
+  ));
+  const visibleConnectionsWidth = Math.min(connectionsWidth, maxConnectionsWidth);
+  const maxConfigWidth = Math.min(CONFIG_PANEL.max, Math.max(CONFIG_PANEL.min, panelBudget - visibleConnectionsWidth));
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  useEffect(() => {
+    if (configOpen && focusHostOnOpen.current) {
+      hostField.current?.focus();
+      focusHostOnOpen.current = false;
+    }
+  }, [configOpen]);
+
+  useEffect(() => {
+    if (notice?.kind === "error") setConfigOpen(true);
+  }, [notice]);
 
   function failNotice(titleKey: TranslationKey, error: unknown): Notice {
     const api = asApiError(error);
@@ -80,6 +110,7 @@ export function App() {
   }
 
   function selectProfile(profile?: Profile) {
+    setConfigOpen(true);
     setSelectedId(profile?.id);
     setDraft(profile ? {
       name: profile.name, host: profile.host, port: String(profile.port),
@@ -93,6 +124,25 @@ export function App() {
       void invoke<string | null>("vault_get_password", { profileId: profile.id })
         .then((pw) => { if (pw) setPassword(pw); }, () => {});
     }
+  }
+
+  function focusConfig() {
+    if (configOpen) {
+      hostField.current?.focus();
+    } else {
+      focusHostOnOpen.current = true;
+      setConfigOpen(true);
+    }
+  }
+
+  function newConnection() {
+    selectProfile();
+    focusConfig();
+  }
+
+  function closeConfig() {
+    setConfigOpen(false);
+    configToggle.current?.focus();
   }
 
   function changeDraft<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -278,7 +328,14 @@ export function App() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <Toolbar vault={vault} onOpenVault={openVault} />
+      <Toolbar
+        vault={vault}
+        onOpenVault={openVault}
+        onNew={newConnection}
+        configOpen={configOpen}
+        configToggle={configToggle}
+        onToggleConfig={() => setConfigOpen((open) => !open)}
+      />
       <div className="flex min-h-0 flex-1">
         <ConnectionPanel
           profiles={profiles}
@@ -287,52 +344,68 @@ export function App() {
           query={query}
           onQuery={setQuery}
           onSelect={selectProfile}
-          onNew={() => selectProfile()}
-          width={connectionsWidth}
+          onNew={newConnection}
+          width={visibleConnectionsWidth}
         />
         <PanelResizeHandle
           label={t("panel.resize.connections")}
-          value={connectionsWidth}
+          value={visibleConnectionsWidth}
           min={CONNECTIONS_PANEL.min}
-          max={CONNECTIONS_PANEL.max}
+          max={maxConnectionsWidth}
           defaultValue={CONNECTIONS_PANEL.fallback}
           side="left"
           onChange={setConnectionsWidth}
         />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <main className="workspace flex min-w-0 flex-1 flex-col">
           <TabStrip tabs={tabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} />
           <div className="relative min-h-0 flex-1">
             {tabs.map((tab) => (
-              <div key={tab.id} className={`absolute inset-0 ${tab.id === activeTabId ? "" : "hidden"}`}>
+              <div
+                key={tab.id}
+                id={`session-panel-${tab.id}`}
+                role="tabpanel"
+                aria-labelledby={`session-tab-${tab.id}`}
+                hidden={tab.id !== activeTabId}
+                className="absolute inset-0"
+              >
                 <RemoteCanvas tab={tab} active={tab.id === activeTabId} onDisconnect={closeTab} onReconnect={reconnect} />
               </div>
             ))}
             {tabs.length === 0 && (
-              <div className="absolute inset-0 grid place-items-center p-6">
-                <div className="flex flex-col items-center text-center animate-fade-in">
-                  <span className="empty-tile" aria-hidden="true">
-                    <MonitorUp size={26} />
-                  </span>
-                  <h2 className="mt-4 text-sm font-semibold">{t("empty.title")}</h2>
-                  <p className="mt-1.5 max-w-[320px] text-xs text-muted-foreground">{t("empty.hint")}</p>
-                  <button type="button" className="btn-primary mt-4" onClick={() => selectProfile()}>
-                    {t("toolbar.newConnection")}
+              <div className="absolute inset-0 grid place-items-center overflow-auto p-6">
+                <div className="empty-workspace">
+                  <div className="empty-illustration" aria-hidden="true">
+                    <div className="empty-window">
+                      <span className="empty-window-bar"><i /><i /><i /></span>
+                      <div className="empty-window-content"><MonitorUp size={30} strokeWidth={1.5} /></div>
+                    </div>
+                  </div>
+                  <h1 className="text-xl font-semibold tracking-[-0.025em]">{t("empty.title")}</h1>
+                  <p className="mt-2 max-w-[300px] text-[13px] leading-5 text-muted-foreground">{t("empty.hint")}</p>
+                  <button type="button" className="btn-primary mt-5" onClick={focusConfig}>
+                    {t("config.focus")}
+                    <ArrowRight size={14} aria-hidden="true" />
                   </button>
                 </div>
               </div>
             )}
           </div>
-        </div>
-        <PanelResizeHandle
-          label={t("panel.resize.config")}
-          value={configWidth}
-          min={CONFIG_PANEL.min}
-          max={CONFIG_PANEL.max}
-          defaultValue={CONFIG_PANEL.fallback}
-          side="right"
-          onChange={setConfigWidth}
-        />
+        </main>
+        {configOpen && (
+          <PanelResizeHandle
+            label={t("panel.resize.config")}
+            value={visibleConfigWidth}
+            min={CONFIG_PANEL.min}
+            max={maxConfigWidth}
+            defaultValue={CONFIG_PANEL.fallback}
+            side="right"
+            onChange={setConfigWidth}
+          />
+        )}
         <ConfigPanel
+          open={configOpen}
+          onClose={closeConfig}
+          hostField={hostField}
           draft={draft}
           password={password}
           remember={remember}
@@ -347,7 +420,7 @@ export function App() {
           onConnect={(event) => void connect(event)}
           onSave={() => void save()}
           onRemove={() => void remove()}
-          width={configWidth}
+          width={visibleConfigWidth}
         />
       </div>
       <StatusBar sessionCount={tabs.length} vault={vault} />

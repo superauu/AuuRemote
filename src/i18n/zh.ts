@@ -12,20 +12,24 @@ export const zh = {
   "toolbar.language": "切换语言",
 
   // Connection panel
-  "panel.connections": "连接",
+  "panel.connections": "已保存的连接",
+  "panel.count": "已保存的连接：{count} 个",
   "panel.search": "搜索连接",
   "panel.loading": "正在读取连接…",
-  "panel.empty": "保存常用主机后，它会出现在这里。",
+  "panel.empty": "保存的连接会显示在这里。",
   "panel.noMatch": "没有匹配的连接。",
   "panel.newConnection": "新建连接",
   "panel.resize.connections": "调整连接面板宽度（双击恢复默认）",
   "panel.resize.config": "调整配置面板宽度（双击恢复默认）",
-  "empty.title": "尚未打开远程会话",
-  "empty.hint": "从左侧选择一个连接，或新建一个远程桌面连接。",
+  "empty.title": "远程桌面",
+  "empty.hint": "选择已保存的连接，或输入主机地址开始远程会话。",
 
   // Config panel
-  "config.new": "连接远程桌面",
+  "config.new": "新建连接",
   "config.edit": "连接设置",
+  "config.focus": "配置连接",
+  "config.show": "显示连接设置",
+  "config.hide": "隐藏连接设置",
   "config.section.server": "服务器",
   "config.section.credentials": "凭据",
   "config.name": "连接名称",
@@ -51,6 +55,7 @@ export const zh = {
   "config.needsDesktop": "连接和保存需要 AuuRemote 桌面应用。",
 
   // Session tabs
+  "tabs.title": "会话",
   "tabs.close": "关闭标签页",
   "tabs.noTabs": "连接后会话会以标签页打开。",
 
