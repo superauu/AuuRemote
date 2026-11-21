@@ -16,7 +16,7 @@ use crate::errors::{ApiError, ErrorCode};
 
 #[cfg(test)]
 mod tests;
-mod clipboard;
+pub(crate) mod clipboard;
 mod transport;
 
 pub(crate) struct Sessions {
@@ -36,11 +36,15 @@ impl Default for Sessions {
 }
 
 impl Sessions {
-    /// Production constructor: spawns the OS clipboard pump thread so every
-    /// session syncs with the local clipboard.
-    pub(crate) fn with_clipboard_pump() -> Self {
+    /// Production constructor: spawns the OS clipboard listener thread so
+    /// every session syncs with the local clipboard. `staging_root` receives
+    /// files downloaded from remote sessions.
+    pub(crate) fn with_clipboard_pump(
+        os: Arc<dyn clipboard::OsClipboard + Send + Sync>,
+        staging_root: std::path::PathBuf,
+    ) -> Self {
         Self {
-            clipboard: clipboard::ClipboardBridge::with_pump(),
+            clipboard: clipboard::ClipboardBridge::with_pump(os, staging_root),
             ..Self::default()
         }
     }
@@ -252,12 +256,11 @@ fn start_session(
     let mut active = sessions.active.lock().expect("session lock");
     let id = sessions.next_id.fetch_add(1, Ordering::Relaxed) + 1;
     let clipboard = make_link(id);
-    let clipboard::ClipboardLink { factory, rx } = clipboard;
     let view = Arc::new(Mutex::new(View::default()));
     let (input, receiver) = mpsc::channel(32);
     let worker_view = view.clone();
     let worker = tauri::async_runtime::spawn(async move {
-        let result = transport::run(connection, fingerprint, receiver, factory, rx, &worker_view).await;
+        let result = transport::run(connection, fingerprint, receiver, clipboard, &worker_view).await;
         let mut view = worker_view.lock().expect("view lock");
         view.frame = None;
         view.error = Some(match result {

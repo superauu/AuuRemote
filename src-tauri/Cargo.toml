@@ -27,8 +27,12 @@ tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
-ironrdp-cliprdr-native = "0.7"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 async-trait = "0.1"

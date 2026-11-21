@@ -6,10 +6,28 @@ mod rdp;
 mod store;
 mod vault;
 
+use std::sync::Arc;
+
+use tauri::Manager;
+
+use rdp::clipboard::OsClipboard;
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(rdp::Sessions::with_clipboard_pump())
+        .setup(|app| {
+            let staging_root = app
+                .path()
+                .app_cache_dir()
+                .expect("app cache dir")
+                .join(rdp::clipboard::STAGING_DIR_NAME);
+            #[cfg(windows)]
+            let os: Arc<dyn OsClipboard + Send + Sync> = Arc::new(rdp::clipboard::WindowsOs);
+            #[cfg(not(windows))]
+            let os: Arc<dyn OsClipboard + Send + Sync> = Arc::new(rdp::clipboard::UnsupportedOs);
+            app.manage(rdp::Sessions::with_clipboard_pump(os, staging_root));
+            Ok(())
+        })
         .manage(vault::Vault::default())
         .invoke_handler(tauri::generate_handler![
             rdp::rdp_connect,

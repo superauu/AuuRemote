@@ -4,19 +4,22 @@ use std::{
 };
 
 use ironrdp::{
-    cliprdr::{CliprdrClient, backend::ClipboardMessage},
+    cliprdr::CliprdrClient,
     connector::{ClientConnector, Config, ConnectionResult, Credentials, DesktopSize},
     graphics::image_processing::PixelFormat,
     input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations},
     pdu::{gcc::KeyboardType, rdp::capability_sets::MajorPlatformType},
-    session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, image::DecodedImage},
+    session::{ActiveStageBuilder, ActiveStageOutput, image::DecodedImage},
 };
 use ironrdp_tls::{CertificateValidationCallback, TlsStream};
 use ironrdp_tokio::{FramedWrite, TokioFramed, reqwest::ReqwestNetworkClient};
 use sha2::{Digest, Sha256};
 use tokio::{net::TcpStream, sync::mpsc, time};
 
-use super::{Connection, Endpoint, Frame, Input, View, format_fingerprint};
+use super::{
+    Connection, Endpoint, Frame, Input, View, format_fingerprint,
+    clipboard::ClipboardLink,
+};
 use crate::errors::{ApiError, ErrorCode};
 
 type RdpStream = TokioFramed<TlsStream<TcpStream>>;
@@ -25,10 +28,17 @@ pub(super) async fn run(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
     mut input: mpsc::Receiver<Vec<Input>>,
-    cliprdr_factory: Option<super::clipboard::SharedCliprdrFactory>,
-    mut clipboard_rx: mpsc::UnboundedReceiver<ClipboardMessage>,
+    clipboard: ClipboardLink,
     view: &Mutex<View>,
 ) -> Result<(), ApiError> {
+    let ClipboardLink {
+        factory: cliprdr_factory,
+        rx: mut clipboard_rx,
+        os,
+        staging_root,
+        state,
+    } = clipboard;
+    let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state);
     let (result, mut stream) =
         time::timeout(Duration::from_secs(25), connect(connection, fingerprint, cliprdr_factory))
             .await
@@ -87,13 +97,13 @@ pub(super) async fn run(
             }
             message = async {
                 match clipboard_rx.recv().await {
-                    Some(message) => message,
+                    Some(event) => event,
                     // Channel closed (clipboard unsupported): park this branch
                     // forever instead of ending the session.
-                    None => std::future::pending::<ClipboardMessage>().await,
+                    None => std::future::pending::<super::clipboard::CliprdrEvent>().await,
                 }
             } => {
-                handle_clipboard_message(&mut stage, message)
+                clipboard_worker.handle(&mut stage, message)
             }
             _ = cliprdr_sweep.tick() => {
                 sweep_cliprdr_timeouts(&mut stage)
@@ -140,49 +150,8 @@ pub(super) async fn run(
     }
 }
 
-/// Clipboard actions from the OS pump thread (or tests) → CLIPRDR PDUs.
-/// Failures are logged, never fatal: clipboard is auxiliary to the session.
-fn handle_clipboard_message(
-    stage: &mut ActiveStage,
-    message: ClipboardMessage,
-) -> Vec<ActiveStageOutput> {
-    let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
-        return Vec::new();
-    };
-    let outcome = match message {
-        ClipboardMessage::SendInitiateCopy(formats) => cliprdr.initiate_copy(&formats).map(Some),
-        ClipboardMessage::SendInitiatePaste(format) => cliprdr.initiate_paste(format).map(Some),
-        ClipboardMessage::SendFormatData(response) => cliprdr.submit_format_data(response).map(Some),
-        ClipboardMessage::SendInitiateFileCopy(files) => cliprdr.initiate_file_copy(files).map(Some),
-        ClipboardMessage::SendFileContentsRequest(request) => {
-            cliprdr.request_file_contents(request).map(Some)
-        }
-        ClipboardMessage::SendFileContentsResponse(response) => {
-            cliprdr.submit_file_contents(response).map(Some)
-        }
-        ClipboardMessage::Error(error) => {
-            eprintln!("cliprdr: backend error ({error})");
-            Ok(None)
-        }
-    };
-    match outcome {
-        Ok(Some(messages)) => match stage.process_svc_processor_messages(messages) {
-            Ok(frame) => vec![ActiveStageOutput::ResponseFrame(frame)],
-            Err(error) => {
-                eprintln!("cliprdr: encode failed ({error})");
-                Vec::new()
-            }
-        },
-        Ok(None) => Vec::new(),
-        Err(error) => {
-            eprintln!("cliprdr: action failed ({error})");
-            Vec::new()
-        }
-    }
-}
-
 /// Drives cliprdr lock-expiry bookkeeping every few seconds.
-fn sweep_cliprdr_timeouts(stage: &mut ActiveStage) -> Vec<ActiveStageOutput> {
+fn sweep_cliprdr_timeouts(stage: &mut ironrdp::session::ActiveStage) -> Vec<ActiveStageOutput> {
     let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
         return Vec::new();
     };
