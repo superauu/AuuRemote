@@ -211,6 +211,9 @@ export function App() {
     setBusy("connecting");
     const details = currentDetails();
     const ok = await startSession(details, password, details.name, selectedId);
+    if (ok) {
+      setConfigOpen(false);
+    }
     if (ok && selectedId !== undefined) {
       if (remember) {
         await savePasswordFor(selectedId, password);
@@ -232,6 +235,7 @@ export function App() {
       });
       setProfiles(result.profiles);
       setSelectedId(result.id);
+      setConfigOpen(false);
       setNotice({ kind: "info", titleKey: "notice.saved" });
     } catch (error) {
       setNotice(failNotice("notice.saveFailed", error));
