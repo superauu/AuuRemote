@@ -74,6 +74,8 @@ export const zh = {
   "session.canvasLabel": "远端桌面。按 Ctrl+Alt+Esc 返回工具栏。",
   "session.hint": "Ctrl+Alt+Esc 返回工具栏",
   "session.ended": "连接已结束",
+  "session.trustCertificate": "信任此证书并重连",
+  "session.trustCertificateTitle": "记住该主机的证书指纹（TOFU），之后连接不再提示",
   "session.reconnectButton": "重新连接",
   "session.certificateHint": "服务端证书指纹（复制到「证书验证」后重试）：",
 
@@ -96,6 +98,7 @@ export const zh = {
   "notice.saved": "连接已保存",
   "notice.removed": "已移除保存的连接",
   "notice.vaultSaveFailed": "无法保存密码到密码库",
+  "notice.trustFailed": "无法保存主机信任记录",
   "notice.reenterPassword": "请在右侧输入密码以重新连接。",
 
   // Master password dialog

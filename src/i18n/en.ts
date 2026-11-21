@@ -76,6 +76,8 @@ export const en: Record<keyof typeof zh, string> = {
   "session.canvasLabel": "Remote desktop. Press Ctrl+Alt+Esc to return to the toolbar.",
   "session.hint": "Ctrl+Alt+Esc returns to the toolbar",
   "session.ended": "Connection ended",
+  "session.trustCertificate": "Trust certificate and reconnect",
+  "session.trustCertificateTitle": "Remember this host's certificate fingerprint (TOFU); future connections skip the prompt",
   "session.reconnectButton": "Reconnect",
   "session.certificateHint": "Server certificate fingerprint (paste into Certificate verification and retry):",
 
@@ -98,6 +100,7 @@ export const en: Record<keyof typeof zh, string> = {
   "notice.saved": "Connection saved",
   "notice.removed": "Saved connection removed",
   "notice.vaultSaveFailed": "Could not save the password to the vault",
+  "notice.trustFailed": "Could not save the host trust record",
   "notice.reenterPassword": "Enter the password on the right to reconnect.",
 
   // Master password dialog

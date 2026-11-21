@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, Camera, LoaderCircle, PlugZap, RefreshCw, Rocket } from "lucide-react";
+import { AlertTriangle, Camera, LoaderCircle, PlugZap, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type PointerEvent, useCallback, useEffect, useRef, useState } from "react";
-import { describeError } from "../errors";
+import { describeError, extractFingerprint } from "../errors";
 import { useI18n } from "../i18n";
 import { scanCode } from "../keyboard";
 import type { Tab } from "../types";
@@ -26,12 +26,13 @@ function toRemote(canvas: HTMLCanvasElement, clientX: number, clientY: number): 
   };
 }
 
-export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
+export function RemoteCanvas({ tab, active, onDisconnect, onReconnect, onTrustCertificate }: {
   tab: Tab;
   /** Only the active tab pulls frames; background tabs poll status at a low rate. */
   active: boolean;
   onDisconnect: (id: number, hadFrame: boolean) => void;
   onReconnect: (tab: Tab) => void;
+  onTrustCertificate: (tab: Tab, fingerprint: string) => void;
 }) {
   const { t } = useI18n();
   const { id, target } = tab;
@@ -48,6 +49,9 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
   const [waitingForFrame, setWaitingForFrame] = useState(false);
   const [size, setSize] = useState<Position>();
   const [ended, setEnded] = useState<{ code?: string; detail?: string }>();
+  const certificateFingerprint = ended?.code === "certificateMismatch"
+    ? extractFingerprint(ended.detail ?? "")
+    : undefined;
   const [text, setText] = useState("");
   const [capture, setCapture] = useState("");
   const [saving, setSaving] = useState(false);
@@ -331,9 +335,26 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect }: {
               <AlertTriangle size={22} aria-hidden="true" className="mx-auto text-ended" />
               <h2 className="mt-2 text-base font-semibold">{t("session.ended")}</h2>
               <p className="mt-1.5 break-words text-xs text-muted-foreground">{statusLine}</p>
-              <div className="mt-4 flex items-center justify-center gap-2">
+              {ended.code === "certificateMismatch" && (
+                <p className="mt-1.5 break-all text-[11px] text-muted-foreground">
+                  {t("session.certificateHint")}
+                  <code className="mt-0.5 block font-mono">{certificateFingerprint ?? ""}</code>
+                </p>
+              )}
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                {ended.code === "certificateMismatch" && certificateFingerprint && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    title={t("session.trustCertificateTitle")}
+                    onClick={() => onTrustCertificate(tab, certificateFingerprint)}
+                  >
+                    <ShieldCheck size={13} aria-hidden="true" />
+                    {t("session.trustCertificate")}
+                  </button>
+                )}
                 {tab.profileId !== undefined && (
-                  <button type="button" className="btn-primary" onClick={() => onReconnect(tab)}>
+                  <button type="button" className="btn-outline" onClick={() => onReconnect(tab)}>
                     <RefreshCw size={13} aria-hidden="true" />
                     {t("session.reconnectButton")}
                   </button>

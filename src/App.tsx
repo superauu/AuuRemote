@@ -12,7 +12,7 @@ import { Toolbar } from "./components/Toolbar";
 import { asApiError, describeError } from "./errors";
 import { type TranslationKey, useI18n } from "./i18n";
 import { usePanelWidth } from "./usePanelWidth";
-import { blankDraft, targetAddress, type BusyState, type Draft, type Notice, type Profile, type Tab, type VaultStatus } from "./types";
+import { blankDraft, targetAddress, targetHost, type BusyState, type Draft, type Notice, type Profile, type Tab, type VaultStatus } from "./types";
 
 const desktop = isTauri();
 
@@ -288,6 +288,16 @@ export function App() {
     setNotice({ kind: "info", titleKey: "notice.reenterPassword" });
   }
 
+  /** TOFU: remember the presented certificate, then retry the connection. */
+  async function trustCertificate(tab: Tab, fingerprint: string) {
+    try {
+      await invoke("trust_host", { host: targetHost(tab.target), fingerprint });
+      await reconnect(tab);
+    } catch (error) {
+      setNotice(failNotice("notice.trustFailed", error));
+    }
+  }
+
   function openVault() {
     setVaultError(undefined);
     setVaultDialog(!vault?.setup ? "create" : vault.unlocked ? "change" : "unlock");
@@ -368,7 +378,7 @@ export function App() {
                 hidden={tab.id !== activeTabId}
                 className="absolute inset-0"
               >
-                <RemoteCanvas tab={tab} active={tab.id === activeTabId} onDisconnect={closeTab} onReconnect={reconnect} />
+                <RemoteCanvas tab={tab} active={tab.id === activeTabId} onDisconnect={closeTab} onReconnect={reconnect} onTrustCertificate={(tab, fingerprint) => void trustCertificate(tab, fingerprint)} />
               </div>
             ))}
             {tabs.length === 0 && (
