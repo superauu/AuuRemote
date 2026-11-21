@@ -208,7 +208,10 @@ async fn connect(
                 ..
             },
         password,
+        width,
+        height,
     } = connection;
+    let desktop_size = sanitized_desktop_size(width, height);
     let tcp = TcpStream::connect((host.as_str(), port))
         .await
         .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "无法连接 RDP 主机"))?;
@@ -222,7 +225,32 @@ async fn connect(
         Some((domain, user)) => (Some(domain.to_owned()), user.to_owned()),
         None => (None, username),
     };
-    let mut connector = ClientConnector::new(client_config(username, password, domain), local);
+    let mut connector = ClientConnector::new(
+        client_config(username, password, domain, desktop_size),
+        local,
+    );
+    // Display Control channel: the server resizes the session to our layout
+    // (Windows 10+/Server 2016+). Unsupported servers simply ignore it.
+    let display_control =
+        ironrdp::displaycontrol::client::DisplayControlClient::new(move |_| {
+            // Our sizes are clamped/validated up front, so building the layout
+            // cannot fail; on the off chance it does, skip the layout push and
+            // keep the negotiated session size.
+            let Ok(layout) = ironrdp::displaycontrol::pdu::DisplayControlMonitorLayout::new_single_primary_monitor(
+                u32::from(desktop_size.width),
+                u32::from(desktop_size.height),
+                None,
+                None,
+            ) else {
+                return Ok(Vec::new());
+            };
+            Ok(vec![Box::new(
+                ironrdp::displaycontrol::pdu::DisplayControlPdu::from(layout),
+            ) as Box<dyn ironrdp::dvc::DvcEncode>])
+        });
+    connector.attach_static_channel(
+        ironrdp::dvc::DrdynvcClient::new().with_dynamic_channel(display_control),
+    );
     if let Some(factory) = &cliprdr_factory {
         let backend = factory
             .lock()
@@ -314,12 +342,27 @@ async fn connect(
     Ok((result, stream))
 }
 
-fn client_config(username: String, password: String, domain: Option<String>) -> Config {
+fn sanitized_desktop_size(width: u16, height: u16) -> DesktopSize {
+    // Display Control requires even dimensions within 200..=8192; fall back to
+    // the prototype default when the client sent nothing sensible.
+    let clamp = |value: u16, min: u16, max: u16, fallback: u16| {
+        let value = value & !1; // force even
+        if (min..=max).contains(&value) { value } else { fallback }
+    };
+    DesktopSize {
+        width: clamp(width, 200, 8192, 1280),
+        height: clamp(height, 200, 8192, 800),
+    }
+}
+
+fn client_config(
+    username: String,
+    password: String,
+    domain: Option<String>,
+    desktop_size: DesktopSize,
+) -> Config {
     Config {
-        desktop_size: DesktopSize {
-            width: 1280,
-            height: 800,
-        },
+        desktop_size,
         desktop_scale_factor: 0,
         enable_tls: true,
         enable_credssp: true,

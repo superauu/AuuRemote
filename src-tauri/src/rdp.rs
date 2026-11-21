@@ -128,6 +128,10 @@ pub(crate) struct Connection {
     #[serde(flatten)]
     endpoint: Endpoint,
     password: String,
+    #[serde(default)]
+    width: u16,
+    #[serde(default)]
+    height: u16,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

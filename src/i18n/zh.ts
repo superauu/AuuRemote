@@ -38,6 +38,8 @@ export const zh = {
   "config.hostPlaceholder": "workstation.example.com",
   "config.port": "端口",
   "config.username": "用户名",
+  "config.resolution": "分辨率",
+  "config.resolutionAuto": "自适应（跟随窗口）",
   "config.usernamePlaceholder": "例如 administrator 或 DOMAIN\\user",
   "config.password": "密码",
   "config.showPassword": "显示密码",

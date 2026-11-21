@@ -142,6 +142,8 @@ async fn verify_loopback() -> anyhow::Result<()> {
             fingerprint: pin.clone(),
         },
         password: "fixture-only".to_owned(),
+        width: 1280,
+        height: 800,
     };
     let sessions = Sessions::default();
     let id = start_session(
@@ -572,6 +574,8 @@ async fn trusted_host_connects_without_pinned_fingerprint() -> anyhow::Result<()
                     fingerprint: String::new(), // no manual pin — the store decides
                 },
                 password: "fixture-only".to_owned(),
+                width: 1280,
+                height: 800,
             };
             let id = start_session(
                 &sessions,
@@ -689,6 +693,8 @@ async fn verify_clipboard_loopback(mode: ServerMode) -> anyhow::Result<()> {
             fingerprint: pin.clone(),
         },
         password: "fixture-only".to_owned(),
+        width: 1280,
+        height: 800,
     };
     let sessions = Sessions::default();
 

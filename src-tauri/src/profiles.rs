@@ -17,6 +17,13 @@ pub(crate) struct Details {
     name: String,
     #[serde(flatten)]
     endpoint: Endpoint,
+    /// "auto" (fit the window) or "WIDTHxHEIGHT"; defaults keep old files valid.
+    #[serde(default = "default_resolution")]
+    resolution: String,
+}
+
+fn default_resolution() -> String {
+    "auto".to_owned()
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -145,6 +152,7 @@ mod tests {
                 username: " fixture ".into(),
                 fingerprint: "ab".repeat(32),
             },
+            resolution: "auto".into(),
         }
     }
 

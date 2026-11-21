@@ -12,11 +12,11 @@ import { Toolbar } from "./components/Toolbar";
 import { asApiError, describeError } from "./errors";
 import { type TranslationKey, useI18n } from "./i18n";
 import { usePanelWidth } from "./usePanelWidth";
-import { blankDraft, targetAddress, targetHost, type BusyState, type Draft, type Notice, type Profile, type Tab, type VaultStatus } from "./types";
+import { blankDraft, resolveSize, targetAddress, targetHost, type BusyState, type Draft, type Notice, type Profile, type Tab, type VaultStatus } from "./types";
 
 const desktop = isTauri();
 
-type ConnectTarget = { host: string; port: number; username: string; fingerprint: string };
+type ConnectTarget = { host: string; port: number; username: string; fingerprint: string; resolution: string };
 
 const CONNECTIONS_PANEL = { key: "auu_remote_panel_connections", fallback: 224, min: 190, max: 420 } as const;
 const CONFIG_PANEL = { key: "auu_remote_panel_config", fallback: 320, min: 280, max: 520 } as const;
@@ -115,6 +115,7 @@ export function App() {
     setDraft(profile ? {
       name: profile.name, host: profile.host, port: String(profile.port),
       username: profile.username, fingerprint: profile.fingerprint,
+      resolution: profile.resolution,
     } : blankDraft);
     setNotice(undefined);
     const saved = hasSavedPassword(profile?.id);
@@ -123,6 +124,11 @@ export function App() {
     if (profile && saved && vault?.unlocked) {
       void invoke<string | null>("vault_get_password", { profileId: profile.id })
         .then((pw) => { if (pw) setPassword(pw); }, () => {});
+    } else if (profile && saved && vault?.setup && !vault.unlocked) {
+      // The vault is locked: prompt for the master password so the remembered
+      // password can be filled in instead of looking lost.
+      setVaultError(undefined);
+      setVaultDialog("unlock");
     }
   }
 
@@ -166,13 +172,19 @@ export function App() {
       host, port,
       username: draft.username,
       fingerprint: draft.fingerprint,
+      resolution: draft.resolution,
     };
   }
 
   async function startSession(target: ConnectTarget, password: string, name: string, profileId: number | undefined, replaceTabId?: number): Promise<boolean> {
     try {
+      const size = resolveSize(target.resolution);
       const id = await invoke<number>("rdp_connect", {
-        connection: { host: target.host, port: target.port, username: target.username, fingerprint: target.fingerprint, password },
+        connection: {
+          host: target.host, port: target.port, username: target.username,
+          fingerprint: target.fingerprint, password,
+          width: size.width, height: size.height,
+        },
       });
       const tab: Tab = { id, profileId, label: name || targetAddress(target.host, target.port), target: targetAddress(target.host, target.port) };
       setTabs((current) => [...current.filter((item) => item.id !== replaceTabId), tab]);
@@ -279,7 +291,7 @@ export function App() {
         const pw = await invoke<string | null>("vault_get_password", { profileId: profile.id });
         if (pw) {
           const ok = await startSession(
-            { host: profile.host, port: profile.port, username: profile.username, fingerprint: profile.fingerprint },
+            { host: profile.host, port: profile.port, username: profile.username, fingerprint: profile.fingerprint, resolution: profile.resolution },
             pw, profile.name, profile.id, tab.id,
           );
           if (ok) return;
@@ -331,6 +343,16 @@ export function App() {
           setVault(await invoke<VaultStatus>("vault_set_password", { profileId: saved.profileId, password: saved.password }));
         } catch (error) {
           setNotice(failNotice("notice.vaultSaveFailed", error));
+        }
+      }
+      // Unlocking fills the selected connection's remembered password, so a
+      // locked vault never looks like a lost password.
+      if (mode === "unlock" && hasSavedPassword(selectedId)) {
+        try {
+          const pw = await invoke<string | null>("vault_get_password", { profileId: selectedId });
+          if (pw) setPassword(pw);
+        } catch {
+          // The user can still type the password manually.
         }
       }
     } catch (error) {

@@ -2,7 +2,7 @@ import { ChevronRight, Eye, EyeOff, KeyRound, Plug, Save, Server, ShieldCheck, S
 import { type ReactNode, type Ref, useState } from "react";
 import { extractFingerprint } from "../errors";
 import { useI18n } from "../i18n";
-import type { BusyState, Draft, Notice } from "../types";
+import { RESOLUTION_OPTIONS, type BusyState, type Draft, type Notice } from "../types";
 
 function Section({ label, icon, children }: { label: string; icon: ReactNode; children: ReactNode }) {
   return (
@@ -114,6 +114,20 @@ export function ConfigPanel({ open, onClose, hostField, draft, password, remembe
                     spellCheck={false}
                     required
                   />
+                </Field>
+                <Field label={t("config.resolution")}>
+                  <select
+                    className="field appearance-auto"
+                    value={draft.resolution}
+                    onChange={(event) => onDraftChange("resolution", event.target.value)}
+                  >
+                    <option value="auto">{t("config.resolutionAuto")}</option>
+                    {RESOLUTION_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option.replace("x", " × ")}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
               </div>
             </Section>

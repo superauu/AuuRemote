@@ -40,6 +40,8 @@ export const en: Record<keyof typeof zh, string> = {
   "config.hostPlaceholder": "workstation.example.com",
   "config.port": "Port",
   "config.username": "Username",
+  "config.resolution": "Resolution",
+  "config.resolutionAuto": "Fit to window",
   "config.usernamePlaceholder": "e.g. administrator or DOMAIN\\user",
   "config.password": "Password",
   "config.showPassword": "Show password",
