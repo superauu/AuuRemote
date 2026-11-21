@@ -328,6 +328,12 @@
     color: hsl(var(--muted-foreground));
   }
 
+  /* Brand logo images carry their own rounded background. */
+  img.icon-tile {
+    background: none;
+    object-fit: cover;
+  }
+
   .conn-row[aria-pressed="true"] .icon-tile, .icon-tile.live {
     background: hsl(var(--primary) / 0.12);
     color: hsl(var(--primary));

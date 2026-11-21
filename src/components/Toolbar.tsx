@@ -1,5 +1,6 @@
 import { KeyRound, Languages, LockKeyhole, LockOpen, Monitor, Moon, PanelRight, Plus, Sun } from "lucide-react";
 import type { Ref } from "react";
+import appLogo from "../assets/auu-remote.png";
 import { setLanguage, useI18n } from "../i18n";
 import { setTheme, type ThemeMode, useTheme } from "../theme";
 import type { VaultStatus } from "../types";
@@ -29,9 +30,7 @@ export function Toolbar({ vault, onOpenVault, onNew, configOpen, configToggle, o
 
   return (
     <header className="app-toolbar flex h-12 shrink-0 items-center gap-2 px-3">
-      <span className="app-icon-tile" aria-hidden="true">
-        <Monitor size={15} strokeWidth={2} />
-      </span>
+      <img src={appLogo} alt="" aria-hidden="true" className="h-7 w-7 shrink-0 rounded-[7px]" />
       <span className="brand-mark select-none">AuuRemote</span>
       <span className="toolbar-divider mx-2" aria-hidden="true" />
       <button type="button" className="btn-outline toolbar-new" onClick={onNew}>

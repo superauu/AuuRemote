@@ -1,4 +1,5 @@
 import { ListFilter, Monitor, Plus, Search } from "lucide-react";
+import appLogo from "../assets/auu-remote.png";
 import { useI18n } from "../i18n";
 import { targetAddress, type Profile } from "../types";
 
@@ -62,9 +63,12 @@ export function ConnectionPanel({ profiles, selectedId, openProfileIds, query, o
               aria-pressed={selectedId === profile.id}
               onClick={() => onSelect(profile)}
             >
-              <span className={`icon-tile ${live ? "live" : ""}`} aria-hidden="true">
-                <Monitor size={14} />
-              </span>
+              <img
+                src={appLogo}
+                alt=""
+                aria-hidden="true"
+                className={`icon-tile ${live ? "live" : ""} p-1`}
+              />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium leading-[18px]" title={profile.name}>{profile.name}</span>
                 <span className="block truncate font-mono text-[11px] leading-4 text-muted-foreground" title={targetAddress(profile.host, profile.port)}>
