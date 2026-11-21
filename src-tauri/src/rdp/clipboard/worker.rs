@@ -147,22 +147,21 @@ impl Worker {
             .lock()
             .expect("clipboard state")
             .snapshot = snapshot.clone();
-        let formats = snapshot.announce_formats();
         if snapshot.has_files() && self.client_ready {
             // Files must go through initiate_file_copy: the library stores
             // the list, serves FileGroupDescriptorW requests itself and
             // forwards FileContentsRequest range reads to our backend.
             return self.announce_files(stage);
         }
-        if snapshot.has_files() {
-            // Still initializing: complete the handshake with a plain format
-            // list; the real file announce happens on the Ready event.
-            self.pending_file_announce = true;
-        }
-        if formats.is_empty() {
-            // Nothing to announce, but the handshake still needs a FormatList.
-            return self.send_protocol(stage, ClipboardMessage::SendInitiateCopy(Vec::new()));
-        }
+        // During the handshake (not Ready yet) a file announce cannot be
+        // backed by local_file_list, so it only advertises text/image formats;
+        // the deferred file announce fires on the Ready event.
+        let formats = if self.client_ready {
+            snapshot.announce_formats()
+        } else {
+            self.pending_file_announce |= snapshot.has_files();
+            snapshot.handshake_formats()
+        };
         self.send_protocol(stage, ClipboardMessage::SendInitiateCopy(formats))
     }
 

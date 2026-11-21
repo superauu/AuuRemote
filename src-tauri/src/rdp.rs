@@ -13,6 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 use tokio::sync::mpsc;
 
 use crate::errors::{ApiError, ErrorCode};
+use crate::trust;
 
 #[cfg(test)]
 mod tests;
@@ -235,16 +236,54 @@ impl Sessions {
 
 #[tauri::command]
 pub(crate) fn rdp_connect(
+    app: AppHandle,
     sessions: State<'_, Sessions>,
     connection: Connection,
 ) -> Result<u32, ApiError> {
-    start_session(&sessions, connection, |id| sessions.clipboard.link(id))
+    let directory = crate::store::config_directory(&app)?;
+    // Small JSON file; reading it inline keeps the command synchronous.
+    let trusted = trust::load(&directory)?;
+    start_session(
+        &sessions,
+        connection,
+        |id| sessions.clipboard.link(id),
+        trusted,
+    )
+}
+
+/// TOFU: remembers the certificate fingerprint the user accepted for a host,
+/// so later connections skip the manual verification prompt.
+#[tauri::command]
+pub(crate) async fn trust_host(
+    app: AppHandle,
+    host: String,
+    fingerprint: String,
+) -> Result<(), ApiError> {
+    let host = host.trim().to_owned();
+    if !valid_host(&host) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidEndpoint,
+            "请输入有效的主机名或 IP。",
+        ));
+    }
+    let digest = parse_fingerprint(&fingerprint)?;
+    let fingerprint = format_fingerprint(&digest.ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::InvalidFingerprint,
+            "请输入 64 位十六进制 SHA-256 证书指纹。",
+        )
+    })?);
+    let directory = crate::store::config_directory(&app)?;
+    tauri::async_runtime::spawn_blocking(move || trust::trust(&directory, host, fingerprint))
+        .await
+        .map_err(|error| ApiError::chain(ErrorCode::Internal, &error, "信任存储任务失败"))?
 }
 
 fn start_session(
     sessions: &Sessions,
     mut connection: Connection,
     make_link: impl FnOnce(u32) -> clipboard::ClipboardLink,
+    trusted: trust::TrustMap,
 ) -> Result<u32, ApiError> {
     let fingerprint = connection.endpoint.validate()?;
     if connection.password.is_empty() {
@@ -260,7 +299,15 @@ fn start_session(
     let (input, receiver) = mpsc::channel(32);
     let worker_view = view.clone();
     let worker = tauri::async_runtime::spawn(async move {
-        let result = transport::run(connection, fingerprint, receiver, clipboard, &worker_view).await;
+        let result = transport::run(
+            connection,
+            fingerprint,
+            receiver,
+            clipboard,
+            trusted,
+            &worker_view,
+        )
+        .await;
         let mut view = worker_view.lock().expect("view lock");
         view.frame = None;
         view.error = Some(match result {

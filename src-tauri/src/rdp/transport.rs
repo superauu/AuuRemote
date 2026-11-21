@@ -29,6 +29,7 @@ pub(super) async fn run(
     fingerprint: Option<[u8; 32]>,
     mut input: mpsc::Receiver<Vec<Input>>,
     clipboard: ClipboardLink,
+    trusted: super::trust::TrustMap,
     view: &Mutex<View>,
 ) -> Result<(), ApiError> {
     let ClipboardLink {
@@ -40,9 +41,12 @@ pub(super) async fn run(
     } = clipboard;
     let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state);
     let (result, mut stream) =
-        time::timeout(Duration::from_secs(25), connect(connection, fingerprint, cliprdr_factory))
-            .await
-            .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
+        time::timeout(
+            Duration::from_secs(25),
+            connect(connection, fingerprint, cliprdr_factory, trusted),
+        )
+        .await
+        .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
     view.lock().expect("view lock").established = true;
 
     let DesktopSize { width, height } = result.desktop_size;
@@ -193,6 +197,7 @@ async fn connect(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
     cliprdr_factory: Option<super::clipboard::SharedCliprdrFactory>,
+    trusted: super::trust::TrustMap,
 ) -> Result<(ConnectionResult, RdpStream), ApiError> {
     let Connection {
         endpoint:
@@ -238,10 +243,18 @@ async fn connect(
 
     let presented = Arc::new(Mutex::new(None));
     let observed = presented.clone();
+    let trusted_host = host.clone();
     let callback: CertificateValidationCallback = Arc::new(move |der, _, _| {
         let digest: [u8; 32] = Sha256::digest(der).into();
         *observed.lock().expect("certificate lock") = Some(digest);
-        fingerprint == Some(digest)
+        if fingerprint == Some(digest) {
+            return true;
+        }
+        // TOFU: hosts whose certificate the user accepted before connect
+        // without re-prompting.
+        trusted
+            .get(&trusted_host)
+            .is_some_and(|stored| *stored == format_fingerprint(&digest))
     });
     let tls = ironrdp_tls::upgrade_with_certificate_validation_callback_for_endpoint(
         tcp,

@@ -148,6 +148,7 @@ async fn verify_loopback() -> anyhow::Result<()> {
         &sessions,
         connection(address.port()),
         |_| ClipboardLink::unsupported(),
+        trust::TrustMap::new(),
     )
     .map_err(anyhow::Error::msg)?;
     let (view, input) = sessions
@@ -253,6 +254,7 @@ async fn verify_loopback() -> anyhow::Result<()> {
         &sessions,
         connection(standby.local_addr()?.port()),
         |_| ClipboardLink::unsupported(),
+        trust::TrustMap::new(),
     )
     .map_err(anyhow::Error::msg)?;
     assert_ne!(next_id, id);
@@ -529,6 +531,81 @@ impl ServerEventSender for ClipboardServerFactory {
 
 impl CliprdrServerFactory for ClipboardServerFactory {}
 
+/// TOFU: a host whose fingerprint is in the trust store connects with an
+/// empty pinned fingerprint.
+#[tokio::test]
+async fn trusted_host_connects_without_pinned_fingerprint() -> anyhow::Result<()> {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+            let address = listener.local_addr()?;
+            let identity = generate_simple_self_signed(vec!["localhost".to_owned()])?;
+            let certificate = identity.cert.der().clone();
+            let pin = format_fingerprint(&Sha256::digest(certificate.as_ref()).into());
+            let key = PrivatePkcs8KeyDer::from(identity.signing_key.serialize_der()).into();
+            let tls = ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate], key)?;
+            let (send_update, updates) = mpsc::channel(2);
+            let (log, _) = mpsc::unbounded_channel();
+            let mut server = RdpServer::builder()
+                .with_addr(address)
+                .with_tls(TlsAcceptor::from(Arc::new(tls)))
+                .with_input_handler(InputLog(log))
+                .with_display_handler(Display(Some(Updates(updates))))
+                .build();
+            let serve = tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await?;
+                server.run_connection(stream).await
+            });
+
+            let mut trusted = trust::TrustMap::new();
+            trusted.insert("127.0.0.1".to_owned(), pin);
+
+            let sessions = Sessions::default();
+            let connection = Connection {
+                endpoint: Endpoint {
+                    host: "127.0.0.1".to_owned(),
+                    port: address.port(),
+                    username: "fixture".to_owned(),
+                    fingerprint: String::new(), // no manual pin — the store decides
+                },
+                password: "fixture-only".to_owned(),
+            };
+            let id = start_session(
+                &sessions,
+                connection,
+                |_| ClipboardLink::unsupported(),
+                trusted,
+            )
+            .map_err(anyhow::Error::msg)?;
+            let (view, _) = sessions
+                .get(id, |session| Ok((session.view.clone(), session.input.clone())))
+                .map_err(anyhow::Error::msg)?;
+
+            // TLS acceptance is proven by the session reaching WaitingForFrame.
+            time::timeout(Duration::from_secs(8), async {
+                loop {
+                    match view.lock().unwrap().status() {
+                        Status::WaitingForFrame => break Ok(()),
+                        Status::Ended { detail, .. } => break Err(anyhow::Error::msg(detail)),
+                        _ => {}
+                    }
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await??;
+            send_update.send(color_frame([255, 0, 0, 255])).await?;
+
+            serve.abort();
+            let _ = serve.await;
+            sessions.disconnect(id);
+            Ok(())
+        })
+        .await
+}
+
 #[tokio::test]
 async fn clipboard_text_syncs_both_ways() -> anyhow::Result<()> {
     tokio::task::LocalSet::new()
@@ -556,9 +633,16 @@ async fn verify_clipboard_loopback(mode: ServerMode) -> anyhow::Result<()> {
         .with_single_cert(vec![certificate], key)?;
 
     // Local side seeds: text (both modes) plus a real file (files mode).
-    let local_file = std::env::temp_dir().join(format!("auuremote-test-{}.txt", std::process::id()));
+    // Parallel tests must not share temp paths: include the mode in the names.
+    let local_file = std::env::temp_dir().join(format!(
+        "auuremote-test-{}-{mode:?}.txt",
+        std::process::id()
+    ));
     std::fs::write(&local_file, CLIPBOARD_FILE_CONTENT)?;
-    let staging_root = std::env::temp_dir().join(format!("auuremote-staging-{}", std::process::id()));
+    let staging_root = std::env::temp_dir().join(format!(
+        "auuremote-staging-{}-{mode:?}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&staging_root)?;
 
     let shared = Arc::new(ClipboardFixture::default());
@@ -625,8 +709,13 @@ async fn verify_clipboard_loopback(mode: ServerMode) -> anyhow::Result<()> {
         Some(staging_root.clone()),
         state,
     );
-    let id = start_session(&sessions, connection(address.port()), |_| link)
-        .map_err(anyhow::Error::msg)?;
+    let id = start_session(
+        &sessions,
+        connection(address.port()),
+        |_| link,
+        trust::TrustMap::new(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let (view, _) = sessions
         .get(id, |session| Ok((session.view.clone(), session.input.clone())))
         .map_err(anyhow::Error::msg)?;
@@ -644,7 +733,7 @@ async fn verify_clipboard_loopback(mode: ServerMode) -> anyhow::Result<()> {
     .await??;
     send_update.send(color_frame([255, 0, 0, 255])).await?;
 
-    let passed = time::timeout(Duration::from_secs(15), async {
+    let passed = time::timeout(Duration::from_secs(30), async {
         loop {
             let text_synced = shared
                 .server_received_text

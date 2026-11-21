@@ -4,6 +4,7 @@ mod errors;
 mod profiles;
 mod rdp;
 mod store;
+mod trust;
 mod vault;
 
 use std::sync::Arc;
@@ -31,6 +32,7 @@ fn main() {
         .manage(vault::Vault::default())
         .invoke_handler(tauri::generate_handler![
             rdp::rdp_connect,
+            rdp::trust_host,
             rdp::rdp_disconnect,
             rdp::rdp_status,
             rdp::rdp_frame,

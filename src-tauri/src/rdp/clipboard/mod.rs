@@ -147,6 +147,20 @@ impl LocalSnapshot {
         !self.files.is_empty()
     }
 
+    /// Formats for the handshake announcement: text/image only. FileGroup
+    /// formats cannot be backed by local_file_list during Initialization and
+    /// the real file announce goes through initiate_file_copy once Ready.
+    fn handshake_formats(&self) -> Vec<ClipboardFormat> {
+        let mut formats = Vec::new();
+        if self.text.is_some() {
+            formats.push(ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT));
+        }
+        if self.dib.is_some() {
+            formats.push(ClipboardFormat::new(ClipboardFormatId::CF_DIB));
+        }
+        formats
+    }
+
     /// The format list announced to the remote for this snapshot.
     fn announce_formats(&self) -> Vec<ClipboardFormat> {
         let mut formats = Vec::new();
