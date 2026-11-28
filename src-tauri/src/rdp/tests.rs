@@ -496,6 +496,7 @@ impl clipboard::OsClipboard for TestOs {
                 .unwrap()
                 .iter()
                 .map(|path| LocalFile {
+                            relative_path: None,
                     name: path
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
@@ -518,6 +519,7 @@ impl clipboard::OsClipboard for TestOs {
                     .as_ref()
                     .map(|(path, size)| {
                         vec![LocalFile {
+                            relative_path: None,
                             name: CLIPBOARD_FILE_NAME.to_owned(),
                             path: path.clone(),
                             size: *size,

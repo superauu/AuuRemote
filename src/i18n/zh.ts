@@ -88,6 +88,7 @@ export const zh = {
   "session.winR": "远端 Win+R",
   "session.screenshot": "保存截图",
   "session.screenshotSaved": "已保存远端截图。",
+  "session.transferring": "正在接收文件 {index}/{count} · {percent}%",
   "session.disconnect": "断开",
   "session.cancel": "取消连接",
   "session.sendPlaceholder": "发送文字到远端当前输入框",

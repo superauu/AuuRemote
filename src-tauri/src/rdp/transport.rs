@@ -54,7 +54,8 @@ pub(super) async fn run(
         staging_root,
         state,
     } = clipboard;
-    let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state);
+    let transfer = view.lock().expect("view lock").transfer.clone();
+    let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state, transfer);
     let mut input = input;
     let mut reconnects_left: u32 = MAX_RECONNECTS;
     // Frame revisions keep rising across reconnects so the canvas keeps

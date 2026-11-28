@@ -4,7 +4,7 @@ import { type FormEvent, type KeyboardEvent, type PointerEvent, useCallback, use
 import { describeError, extractFingerprint } from "../errors";
 import { useI18n } from "../i18n";
 import { scanCode } from "../keyboard";
-import { fitSize, type Tab } from "../types";
+import { fitSize, type Tab, type TransferProgress } from "../types";
 
 type Position = { x: number; y: number };
 type SessionStatus =
@@ -62,6 +62,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
     : undefined;
   const [text, setText] = useState("");
   const [capture, setCapture] = useState("");
+  const [transfer, setTransfer] = useState<TransferProgress | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -153,6 +154,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
     let mounted = true;
     let after = 0;
     let firstFrame = true;
+    let pollTicks = 0;
     live.current = true;
 
     async function nextFrame() {
@@ -197,6 +199,10 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
           renderer.putImageData(new ImageData(new Uint8ClampedArray(buffer, 8), width, height), 0, 0);
           hasFrame.current = true;
           setPendingState("connecting");
+          pollTicks += 1;
+          if (pollTicks % 16 === 0) {
+            void invoke<TransferProgress | null>("rdp_transfer", { id }).then(setTransfer, () => {});
+          }
           if (firstFrame) {
             firstFrame = false;
             // Exact-fit once frames flow; further pushes come from the observer.
@@ -315,6 +321,14 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
       setSaving(false);
     }
   }
+
+  const transferLine = transfer && transfer.fileCount > 0
+    ? t("session.transferring", {
+        index: transfer.fileIndex + 1,
+        count: transfer.fileCount,
+        percent: transfer.bytesTotal > 0 ? Math.round((transfer.bytesDone * 100) / transfer.bytesTotal) : 0,
+      })
+    : undefined;
 
   const statusLine = ended
     ? describeError({ code: ended.code ?? "connectionFailed", detail: ended.detail ?? "" }, t)
@@ -458,7 +472,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
           </button>
         </form>
         <span className="session-hint truncate text-xs text-muted-foreground" data-capture={!!capture} role="status">
-          {capture || t("session.hint")}
+          {capture || transferLine || t("session.hint")}
         </span>
       </footer>
     </div>

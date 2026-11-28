@@ -72,6 +72,7 @@ impl Drop for Session {
 #[derive(Default)]
 struct View {
     established: bool,
+    transfer: clipboard::TransferHandle,
     /** A live session dropped and the worker is retrying the connection. */
     reconnecting: bool,
     frame: Option<Arc<Frame>>,
@@ -341,6 +342,24 @@ fn start_session(
         },
     );
     Ok(id)
+}
+
+/// Live remote-file download progress for the session, if one is running.
+#[tauri::command]
+pub(crate) fn rdp_transfer(
+    sessions: State<'_, Sessions>,
+    id: u32,
+) -> Result<Option<clipboard::TransferProgress>, ApiError> {
+    sessions.get(id, |session| {
+        Ok(session
+            .view
+            .lock()
+            .expect("view lock")
+            .transfer
+            .lock()
+            .expect("transfer lock")
+            .clone())
+    })
 }
 
 #[tauri::command]

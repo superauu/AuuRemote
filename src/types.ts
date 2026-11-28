@@ -77,3 +77,11 @@ export function targetHost(target: string) {
   const colon = target.lastIndexOf(":");
   return colon === -1 ? target : target.slice(0, colon);
 }
+
+/** Live progress of a remote-to-local clipboard file download. */
+export type TransferProgress = {
+  fileIndex: number;
+  fileCount: number;
+  bytesDone: number;
+  bytesTotal: number;
+};

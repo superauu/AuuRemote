@@ -90,6 +90,7 @@ export const en: Record<keyof typeof zh, string> = {
   "session.winR": "Remote Win+R",
   "session.screenshot": "Save screenshot",
   "session.screenshotSaved": "Remote screenshot saved.",
+  "session.transferring": "Receiving file {index}/{count} · {percent}%",
   "session.disconnect": "Disconnect",
   "session.cancel": "Cancel connection",
   "session.sendPlaceholder": "Send text to the focused remote control",

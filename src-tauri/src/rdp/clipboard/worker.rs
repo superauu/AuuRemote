@@ -58,6 +58,8 @@ pub(crate) struct Worker {
     /// What we last wrote to the OS clipboard from the remote, to detect our
     /// own writes when the OS reports the next clipboard change.
     last_published: Option<LocalSnapshot>,
+    /// Download progress sink shared with the session view.
+    progress: super::TransferHandle,
 }
 
 impl Worker {
@@ -65,6 +67,7 @@ impl Worker {
         os: Option<Arc<dyn OsClipboard + Send + Sync>>,
         staging_root: Option<PathBuf>,
         state: Arc<Mutex<SessionState>>,
+        progress: super::TransferHandle,
     ) -> Self {
         Self {
             os,
@@ -80,6 +83,7 @@ impl Worker {
             client_ready: false,
             pending_file_announce: false,
             last_published: None,
+            progress,
         }
     }
 
@@ -244,6 +248,17 @@ impl Worker {
     ) -> anyhow::Result<Vec<ActiveStageOutput>> {
         eprintln!("[cliprdr] remote file list: {} files", files.len());
         self.pending = None;
+        // Directory entries only carry structure; the file descriptors below
+        // them recreate the tree via their relative paths.
+        let files: Vec<FileDescriptor> = files
+            .into_iter()
+            .filter(|file| {
+                !file
+                    .attributes
+                    .unwrap_or(ClipboardFileAttributes::empty())
+                    .contains(ClipboardFileAttributes::DIRECTORY)
+            })
+            .collect();
         if files.is_empty() {
             return self.start_next_step(stage);
         }
@@ -260,6 +275,14 @@ impl Worker {
             ));
         }
         let staging_dir = self.create_staging_dir()?;
+        if let Ok(mut handle) = self.progress.lock() {
+            *handle = Some(super::TransferProgress {
+                file_index: 0,
+                file_count: files.len(),
+                bytes_done: 0,
+                bytes_total: total,
+            });
+        }
         self.download = Some(Download {
             files,
             data_id,
@@ -405,18 +428,40 @@ impl Worker {
             };
             let descriptor = &download.files[download.index];
             let file_name = sanitize_file_name(&descriptor.name, download.index);
-            let staged_path = download.staging_dir.join(&file_name);
+            let mut staged_dir = download.staging_dir.clone();
+            if let Some(prefix) = &descriptor.relative_path {
+                if let Some(clean) = sanitize_relative_path(prefix) {
+                    staged_dir = staged_dir.join(clean);
+                }
+            }
+            let staged_path = staged_dir.join(&file_name);
+            if let Some(parent) = staged_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| anyhow::anyhow!("staging dir creation failed: {error}"))?;
+            }
             std::fs::write(&staged_path, &download.buffer)
                 .map_err(|error| anyhow::anyhow!("staging write failed: {error}"))?;
             download.staged.push(staged_path);
             download.buffer = Vec::new();
             download.index += 1;
             download.offset = 0;
+            if let Ok(mut handle) = self.progress.lock() {
+                if let Some(current) = handle.as_mut() {
+                    current.file_index = download.index;
+                    current.bytes_done = download.files[..download.index]
+                        .iter()
+                        .map(|file| file.file_size.unwrap_or(0))
+                        .sum();
+                }
+            }
             download.awaiting_size = true;
             download.file_size = 0;
             if download.index >= download.files.len() {
                 completed = Some((PathBuf::new(), std::mem::take(&mut download.staged)));
                 self.download = None;
+                if let Ok(mut handle) = self.progress.lock() {
+                    handle.take();
+                }
             }
         }
         if let Some((_, staged)) = completed {
@@ -499,6 +544,33 @@ impl Worker {
     }
 }
 
+/// Turns a remote relative path into a safe staging sub-path: segments are
+/// cleaned per-component, `.`/`..`/drive/absolute segments are dropped, and
+/// `None` means "no usable prefix".
+fn sanitize_relative_path(path: &str) -> Option<String> {
+    let segments: Vec<String> = path
+        .split(['\\', '/'])
+        .filter_map(|segment| {
+            let segment = segment.trim();
+            if segment.is_empty() || segment == "." || segment == ".." || segment.ends_with(':') {
+                return None;
+            }
+            let cleaned: String = segment
+                .chars()
+                .map(|char| {
+                    if matches!(char, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                        '_'
+                    } else {
+                        char
+                    }
+                })
+                .collect();
+            (cleaned != "." && cleaned != "..").then_some(cleaned)
+        })
+        .collect();
+    (!segments.is_empty()).then(|| segments.join("\\"))
+}
+
 /// The remote file names arrive pre-sanitized by ironrdp-cliprdr; keep a local
 /// fallback for the staging path anyway.
 fn sanitize_file_name(name: &str, index: usize) -> String {
@@ -519,5 +591,23 @@ fn sanitize_file_name(name: &str, index: usize) -> String {
         format!("file-{index}")
     } else {
         cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_relative_path;
+
+    #[test]
+    fn nested_prefixes_survive_and_traversal_drops() {
+        let bs = '\\';
+        assert_eq!(
+            sanitize_relative_path(&format!("folder{bs}sub")),
+            Some(format!("folder{bs}sub"))
+        );
+        assert_eq!(sanitize_relative_path(&format!("a/../b{bs}c")), Some(format!("a{bs}b{bs}c")));
+        assert_eq!(sanitize_relative_path(&format!("..{bs}..")), None);
+        assert_eq!(sanitize_relative_path(&format!("C:{bs}x")), Some(String::from("x")));
+        assert_eq!(sanitize_relative_path(""), None);
     }
 }

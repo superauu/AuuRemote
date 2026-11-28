@@ -12,6 +12,7 @@
 //!   and streaming file ranges for uploads. `ironrdp-cliprdr` handles FDW
 //!   encoding/decoding, locking and remote file-name sanitization.
 
+use serde::Serialize;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex, Once},
@@ -126,10 +127,24 @@ const DROP_EFFECT_FORMAT_ID: u32 = 0xC0FD;
 // DropEffect payload: DROPEFFECT_COPY as a little-endian DWORD.
 const DROP_EFFECT_COPY: [u8; 4] = 1u32.to_le_bytes();
 
+/// Live progress of a remote-to-local file download, surfaced to the UI.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransferProgress {
+    pub file_index: usize,
+    pub file_count: usize,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+}
+
+pub(crate) type TransferHandle = std::sync::Arc<std::sync::Mutex<Option<TransferProgress>>>;
+
 /// A file on the local machine that is announced to the remote.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LocalFile {
     pub name: String,
+    /// Directory prefix (backslash separated) recreating copied folders.
+    pub relative_path: Option<String>,
     pub path: PathBuf,
     pub size: u64,
 }
@@ -208,9 +223,13 @@ fn file_list_wire(files: &[LocalFile]) -> Vec<u8> {
     let descriptors: Vec<FileDescriptor> = files
         .iter()
         .map(|file| {
-            FileDescriptor::new(file.name.clone())
+            let mut descriptor = FileDescriptor::new(file.name.clone())
                 .with_attributes(ClipboardFileAttributes::ARCHIVE)
-                .with_file_size(file.size)
+                .with_file_size(file.size);
+            if let Some(prefix) = &file.relative_path {
+                descriptor = descriptor.with_relative_path(prefix.clone());
+            }
+            descriptor
         })
         .collect();
     let packed = PackedFileList { files: descriptors };

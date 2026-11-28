@@ -44,6 +44,7 @@ fn main() {
             rdp::trust_host,
             rdp::rdp_disconnect,
             rdp::rdp_status,
+            rdp::rdp_transfer,
             rdp::rdp_frame,
             rdp::rdp_input,
             rdp::rdp_screenshot,

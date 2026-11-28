@@ -66,23 +66,34 @@ impl OsClipboard for WindowsOs {
                 snapshot.dib = Some(read_raw(CF_DIB)?);
             }
             if available(CF_HDROP) {
-                snapshot.files = read_hdrop()?
-                    .into_iter()
-                    .filter_map(|path| {
-                        let metadata = std::fs::metadata(&path).ok()?;
-                        if metadata.is_dir() {
-                            // Nested folders would need recursive streaming; this
-                            // version syncs plain files only.
-                            return None;
-                        }
-                        Some(LocalFile {
+                // Dropped folders expand recursively: each file keeps a
+                // backslash-separated prefix so the remote paste recreates
+                // the directory structure.
+                let mut files = Vec::new();
+                for path in read_hdrop()? {
+                    let metadata = match std::fs::metadata(&path) {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
+                    if metadata.is_dir() {
+                        let prefix = path.file_name().map_or_else(
+                            || path.to_string_lossy().into_owned(),
+                            |name| name.to_string_lossy().into_owned(),
+                        );
+                        walk_files(&path, &prefix, &mut files);
+                    } else {
+                        files.push(LocalFile {
                             name: file_name(&path),
+                            relative_path: None,
                             path,
                             size: metadata.len(),
-                        })
-                    })
-                    .take(MAX_FILES_PER_COPY)
-                    .collect();
+                        });
+                    }
+                    if files.len() >= MAX_FILES_PER_COPY {
+                        break;
+                    }
+                }
+                snapshot.files = files.into_iter().take(MAX_FILES_PER_COPY).collect();
             }
             Ok(snapshot)
         })
@@ -158,6 +169,34 @@ fn set_raw(format: u32, data: &[u8]) -> Result<(), String> {
     unsafe { SetClipboardData(format, Some(HANDLE(global.0))) }
         .map_err(|error| format!("SetClipboardData({format}) failed: {error}"))
         .map(|_| ())
+}
+
+/// Recursively collects files under `dir`, tagging each with the accumulated
+/// backslash-separated prefix so a remote Explorer paste rebuilds the tree.
+fn walk_files(dir: &std::path::Path, prefix: &str, out: &mut Vec<LocalFile>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if out.len() >= MAX_FILES_PER_COPY {
+            return;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if file_type.is_dir() {
+            walk_files(&path, &format!("{prefix}\\{name}"), out);
+        } else if let Ok(metadata) = entry.metadata() {
+            out.push(LocalFile {
+                name,
+                relative_path: Some(prefix.to_owned()),
+                path,
+                size: metadata.len(),
+            });
+        }
+    }
 }
 
 /// Parses a DROPFILES/CF_HDROP payload (UTF-16 path list, double-null ended).
