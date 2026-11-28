@@ -202,6 +202,12 @@ pub(crate) enum Input {
     },
     RemoteRun,
     ReleaseAll,
+    /// Requests a new desktop size over the Display Control channel; the
+    /// server answers with a Deactivation-Reactivation Sequence.
+    Resize {
+        width: u16,
+        height: u16,
+    },
 }
 
 impl Sessions {

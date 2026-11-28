@@ -5,16 +5,25 @@ use std::{
 
 use ironrdp::{
     cliprdr::CliprdrClient,
-    connector::{ClientConnector, Config, ConnectionResult, Credentials, DesktopSize},
+    connector::{
+        ClientConnector, Config, ConnectionResult, Credentials, DesktopSize,
+        connection_activation::ConnectionActivationState,
+    },
+    core::WriteBuf,
     graphics::image_processing::PixelFormat,
     input::{Database, MouseButton, MousePosition, Operation, Scancode, WheelRotations},
     pdu::{gcc::KeyboardType, rdp::capability_sets::MajorPlatformType},
-    session::{ActiveStageBuilder, ActiveStageOutput, image::DecodedImage},
+    session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, fast_path, image::DecodedImage},
 };
 use ironrdp_tls::{CertificateValidationCallback, TlsStream};
-use ironrdp_tokio::{FramedWrite, TokioFramed, reqwest::ReqwestNetworkClient};
+use ironrdp_tokio::{FramedWrite, TokioFramed, single_sequence_step_read, reqwest::ReqwestNetworkClient};
 use sha2::{Digest, Sha256};
-use tokio::{net::TcpStream, sync::mpsc, time};
+use tokio::{
+    io::{ReadHalf, WriteHalf},
+    net::TcpStream,
+    sync::mpsc,
+    time,
+};
 
 use super::{
     Connection, Endpoint, Frame, Input, View, format_fingerprint,
@@ -23,6 +32,8 @@ use super::{
 use crate::errors::{ApiError, ErrorCode};
 
 type RdpStream = TokioFramed<TlsStream<TcpStream>>;
+type RdpReader = TokioFramed<ReadHalf<TlsStream<TcpStream>>>;
+type RdpWriter = TokioFramed<WriteHalf<TlsStream<TcpStream>>>;
 
 pub(super) async fn run(
     connection: Connection,
@@ -40,7 +51,7 @@ pub(super) async fn run(
         state,
     } = clipboard;
     let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state);
-    let (result, mut stream) =
+    let (result, stream) =
         time::timeout(
             Duration::from_secs(25),
             connect(connection, fingerprint, cliprdr_factory, trusted),
@@ -48,8 +59,9 @@ pub(super) async fn run(
         .await
         .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
     view.lock().expect("view lock").established = true;
+    let activation_factory = result.activation_factory;
 
-    let DesktopSize { width, height } = result.desktop_size;
+    let DesktopSize { mut width, mut height } = result.desktop_size;
     if !(width > 0 && height > 0 && width <= 4096 && height <= 2160) {
         return Err(ApiError::new(
             ErrorCode::ResolutionUnsupported,
@@ -68,6 +80,9 @@ pub(super) async fn run(
         pointer_software_rendering: false,
     }
     .build();
+    // Split so the Deactivation-Reactivation handshake can read the stream
+    // directly while the main loop owns the read half the rest of the time.
+    let (mut reader, mut writer) = ironrdp_tokio::split_tokio_framed(stream);
     let mut keys = Database::new();
     let mut tick = time::interval(Duration::from_millis(33));
     tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -81,7 +96,7 @@ pub(super) async fn run(
 
     loop {
         let output = tokio::select! {
-            received = stream.read_pdu() => {
+            received = reader.read_pdu() => {
                 let (action, bytes) = received
                     .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "读取远端画面失败"))?;
                 stage.process(&mut image, action, &bytes)
@@ -91,10 +106,17 @@ pub(super) async fn run(
                 let Some(batch) = received else { return Ok(()); };
                 let mut output = Vec::new();
                 for event in batch {
-                    let events = input_events(&mut keys, event, width, height);
-                    for chunk in events.chunks(64) {
-                        output.extend(stage.process_fastpath_input(&mut image, chunk)
-                            .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "编码远端输入失败"))?);
+                    match event {
+                        Input::Resize { width: requested_width, height: requested_height } => {
+                            output.extend(request_desktop_resize(&mut stage, requested_width, requested_height));
+                        }
+                        other => {
+                            let events = input_events(&mut keys, other, width, height);
+                            for chunk in events.chunks(64) {
+                                output.extend(stage.process_fastpath_input(&mut image, chunk)
+                                    .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "编码远端输入失败"))?);
+                            }
+                        }
                     }
                 }
                 output
@@ -130,7 +152,7 @@ pub(super) async fn run(
         for event in output {
             match event {
                 ActiveStageOutput::ResponseFrame(frame) if !frame.is_empty() => {
-                    time::timeout(Duration::from_secs(10), stream.write_all(&frame))
+                    time::timeout(Duration::from_secs(10), writer.write_all(&frame))
                         .await
                         .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "发送 RDP 数据超时"))?
                         .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "发送 RDP 数据失败"))?;
@@ -143,10 +165,16 @@ pub(super) async fn run(
                     ));
                 }
                 ActiveStageOutput::DeactivateAll => {
-                    return Err(ApiError::new(
-                        ErrorCode::ConnectionFailed,
-                        "远端已停用或更改桌面，请重新连接。",
-                    ));
+                    reactivate(
+                        &mut reader,
+                        &mut writer,
+                        &activation_factory,
+                        &mut stage,
+                        &mut image,
+                        &mut width,
+                        &mut height,
+                    )
+                    .await?;
                 }
                 _ => {}
             }
@@ -172,6 +200,83 @@ fn sweep_cliprdr_timeouts(stage: &mut ironrdp::session::ActiveStage) -> Vec<Acti
             Vec::new()
         }
     }
+}
+
+/// Time budget for the whole Deactivation-Reactivation handshake.
+const REACTIVATION_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Pushes a new single-monitor layout over the Display Control channel. The
+/// server responds with a Deactivation-Reactivation Sequence (handled at the
+/// `DeactivateAll` output); servers without the channel keep the old size.
+fn request_desktop_resize(stage: &mut ActiveStage, width: u16, height: u16) -> Vec<ActiveStageOutput> {
+    let size = sanitized_desktop_size(width, height);
+    match stage.encode_resize(u32::from(size.width), u32::from(size.height), None, None) {
+        Some(Ok(frame)) => vec![ActiveStageOutput::ResponseFrame(frame)],
+        // A failed encode sent nothing: keep the session alive and the old size.
+        Some(Err(error)) => {
+            eprintln!("displaycontrol: resize encode failed ({error})");
+            Vec::new()
+        }
+        None => Vec::new(),
+    }
+}
+
+/// Runs the Deactivation-Reactivation Sequence (MS-RDPBCGR §1.3.11.1.1) after
+/// the server suspended the session, typically to adopt a new desktop size.
+/// The handshake reads its own PDUs from the stream, bypassing the active
+/// stage, and ends by adopting the negotiated framebuffer size.
+async fn reactivate(
+    reader: &mut RdpReader,
+    writer: &mut RdpWriter,
+    factory: &ironrdp::connector::connection_activation::ConnectionActivationFactory,
+    stage: &mut ActiveStage,
+    image: &mut DecodedImage,
+    width: &mut u16,
+    height: &mut u16,
+) -> Result<(), ApiError> {
+    let mut connection_activation = factory.create();
+    let mut buffer = WriteBuf::new();
+    time::timeout(REACTIVATION_TIMEOUT, async {
+        loop {
+            let written = single_sequence_step_read(reader, &mut connection_activation, &mut buffer)
+                .await
+                .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "桌面重激活握手失败"))?;
+            if let Some(_response_len) = written.size() {
+                writer
+                    .write_all(buffer.filled())
+                    .await
+                    .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "桌面重激活握手失败"))?;
+            }
+            if let ConnectionActivationState::Finalized {
+                desktop_size,
+                share_id,
+                enable_server_pointer,
+                pointer_software_rendering,
+            } = connection_activation.connection_activation_state()
+            {
+                *width = desktop_size.width;
+                *height = desktop_size.height;
+                *image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
+                stage.set_fastpath_processor(
+                    fast_path::ProcessorBuilder {
+                        io_channel_id: connection_activation.io_channel_id(),
+                        user_channel_id: connection_activation.user_channel_id(),
+                        share_id,
+                        enable_server_pointer,
+                        pointer_software_rendering,
+                        bulk_decompressor: None,
+                    }
+                    .build(),
+                );
+                stage.set_share_id(share_id);
+                stage.set_enable_server_pointer(enable_server_pointer);
+                return Ok::<(), ApiError>(());
+            }
+        }
+    })
+    .await
+    .map_err(|_| ApiError::new(ErrorCode::ConnectionFailed, "桌面重激活握手超时。"))??;
+    Ok(())
 }
 
 fn make_frame(image: &DecodedImage, revision: u32) -> Frame {
@@ -451,6 +556,8 @@ fn input_events(
             key(0xE05B, false),
         ]),
         Input::ReleaseAll => keys.release_all(),
+        // Handled before this mapping, in the session loop; nothing to encode.
+        Input::Resize { .. } => keys.apply([]),
     }
     .into_vec()
 }

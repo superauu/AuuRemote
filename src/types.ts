@@ -24,6 +24,8 @@ export type Tab = {
   profileId?: number;
   label: string;
   target: string;
+  /** Resolution mode the session started with; "auto" follows the canvas. */
+  resolution: string;
 };
 
 export type Notice = {
@@ -53,10 +55,15 @@ export function resolveSize(resolution: string): { width: number; height: number
       return { width, height };
     }
   }
+  return fitSize(window.innerWidth, window.innerHeight);
+}
+
+/** Device-pixel desktop size (even, in-bounds) that fills a CSS-pixel viewport. */
+export function fitSize(width: number, height: number): { width: number; height: number } {
   const dpr = window.devicePixelRatio || 1;
   return {
-    width: Math.max(800, Math.min(4096, Math.round((window.innerWidth * dpr) / 2) * 2)),
-    height: Math.max(600, Math.min(2160, Math.round((window.innerHeight * dpr) / 2) * 2)),
+    width: Math.max(800, Math.min(4096, Math.round((width * dpr) / 2) * 2)),
+    height: Math.max(600, Math.min(2160, Math.round((height * dpr) / 2) * 2)),
   };
 }
 

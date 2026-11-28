@@ -4,7 +4,7 @@ import { type FormEvent, type KeyboardEvent, type PointerEvent, useCallback, use
 import { describeError, extractFingerprint } from "../errors";
 import { useI18n } from "../i18n";
 import { scanCode } from "../keyboard";
-import type { Tab } from "../types";
+import { fitSize, type Tab } from "../types";
 
 type Position = { x: number; y: number };
 type SessionStatus =
@@ -16,7 +16,8 @@ type Input =
   | ({ type: "wheel"; units: number; vertical: boolean } & Position)
   | { type: "key"; scanCode: number; pressed: boolean }
   | { type: "text"; text: string }
-  | { type: "remoteRun" | "releaseAll" };
+  | { type: "remoteRun" | "releaseAll" }
+  | { type: "resize"; width: number; height: number };
 
 function toRemote(canvas: HTMLCanvasElement, clientX: number, clientY: number): Position {
   const bounds = canvas.getBoundingClientRect();
@@ -26,10 +27,12 @@ function toRemote(canvas: HTMLCanvasElement, clientX: number, clientY: number): 
   };
 }
 
-export function RemoteCanvas({ tab, active, onDisconnect, onReconnect, onTrustCertificate }: {
+export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnect, onTrustCertificate }: {
   tab: Tab;
   /** Only the active tab pulls frames; background tabs poll status at a low rate. */
   active: boolean;
+  /** "auto" sessions follow the canvas size by pushing Display Control layouts. */
+  autoResize: boolean;
   onDisconnect: (id: number, hadFrame: boolean) => void;
   onReconnect: (tab: Tab) => void;
   onTrustCertificate: (tab: Tab, fingerprint: string) => void;
@@ -37,6 +40,8 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect, onTrustCe
   const { t } = useI18n();
   const { id, target } = tab;
   const canvas = useRef<HTMLCanvasElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const lastResize = useRef<Position | undefined>(undefined);
   const disconnectButton = useRef<HTMLButtonElement>(null);
   const pending = useRef<Input[]>([]);
   const sending = useRef(false);
@@ -185,6 +190,37 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect, onTrustCe
     };
   }, [id, markEnded]);
 
+  // "auto" sessions push a new Display Control layout once the canvas area
+  // settles into a different size; the remote resizes itself and later frames
+  // arrive at the new dimensions. Each push costs a session reactivation, so
+  // the observer debounces and ignores sub-pixel jitter.
+  useEffect(() => {
+    const container = viewport.current;
+    if (!container || !autoResize) return;
+    let scheduled = 0;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(scheduled);
+      scheduled = window.setTimeout(() => {
+        if (!live.current || !hasFrame.current) return;
+        const rect = container.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const { width, height } = fitSize(rect.width, rect.height);
+        const last = lastResize.current;
+        if (last && Math.abs(last.x - width) < 32 && Math.abs(last.y - height) < 32) return;
+        lastResize.current = { x: width, y: height };
+        invoke("rdp_input", { id, events: [{ type: "resize", width, height }] }).catch((error) => {
+          const api = error as { code?: string; detail?: string };
+          markEnded(api?.code, api?.detail ?? String(error));
+        });
+      }, 300);
+    });
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(scheduled);
+    };
+  }, [autoResize, id, markEnded]);
+
   useEffect(() => {
     const surface = canvas.current;
     if (!surface || !size) return;
@@ -305,7 +341,7 @@ export function RemoteCanvas({ tab, active, onDisconnect, onReconnect, onTrustCe
           </button>
         </div>
       </div>
-      <div className="relative grid min-h-0 flex-1 place-items-center overflow-hidden bg-sunken">
+      <div ref={viewport} className="relative grid min-h-0 flex-1 place-items-center overflow-hidden bg-sunken">
         <canvas
           ref={canvas}
           hidden={!size}

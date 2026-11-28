@@ -186,7 +186,7 @@ export function App() {
           width: size.width, height: size.height,
         },
       });
-      const tab: Tab = { id, profileId, label: name || targetAddress(target.host, target.port), target: targetAddress(target.host, target.port) };
+      const tab: Tab = { id, profileId, label: name || targetAddress(target.host, target.port), target: targetAddress(target.host, target.port), resolution: target.resolution };
       setTabs((current) => [...current.filter((item) => item.id !== replaceTabId), tab]);
       setActiveTabId(id);
       setNotice(undefined);
@@ -404,7 +404,7 @@ export function App() {
                 hidden={tab.id !== activeTabId}
                 className="absolute inset-0"
               >
-                <RemoteCanvas tab={tab} active={tab.id === activeTabId} onDisconnect={closeTab} onReconnect={reconnect} onTrustCertificate={(tab, fingerprint) => void trustCertificate(tab, fingerprint)} />
+                <RemoteCanvas tab={tab} active={tab.id === activeTabId} autoResize={tab.resolution === "auto"} onDisconnect={closeTab} onReconnect={reconnect} onTrustCertificate={(tab, fingerprint) => void trustCertificate(tab, fingerprint)} />
               </div>
             ))}
             {tabs.length === 0 && (

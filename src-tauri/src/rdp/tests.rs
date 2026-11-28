@@ -268,6 +268,90 @@ async fn verify_loopback() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resize requests against a server without the Display Control channel must
+/// be no-ops that leave the session fully usable (frames keep flowing, input
+/// accepted, no error surfaced).
+#[tokio::test]
+async fn resize_input_keeps_session_alive_without_display_control() -> anyhow::Result<()> {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+            let address = listener.local_addr()?;
+            let identity = generate_simple_self_signed(vec!["localhost".to_owned()])?;
+            let certificate = identity.cert.der().clone();
+            let pin = format_fingerprint(&Sha256::digest(certificate.as_ref()).into());
+            let key = PrivatePkcs8KeyDer::from(identity.signing_key.serialize_der()).into();
+            let tls = ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate], key)?;
+            let (send_update, updates) = mpsc::channel(2);
+            let (log, _received) = mpsc::unbounded_channel();
+            let mut server = RdpServer::builder()
+                .with_addr(address)
+                .with_tls(TlsAcceptor::from(Arc::new(tls)))
+                .with_input_handler(InputLog(log))
+                .with_display_handler(Display(Some(Updates(updates))))
+                .build();
+            let serve = tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await?;
+                server.run_connection(stream).await
+            });
+            let sessions = Sessions::default();
+            let id = start_session(
+                &sessions,
+                Connection {
+                    endpoint: Endpoint {
+                        host: "127.0.0.1".to_owned(),
+                        port: address.port(),
+                        username: "fixture".to_owned(),
+                        fingerprint: pin.clone(),
+                    },
+                    password: "fixture-only".to_owned(),
+                    width: 1280,
+                    height: 800,
+                },
+                |_| ClipboardLink::unsupported(),
+                trust::TrustMap::new(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let (view, input) = sessions
+                .get(id, |session| Ok((session.view.clone(), session.input.clone())))
+                .map_err(anyhow::Error::msg)?;
+            time::timeout(Duration::from_secs(8), async {
+                loop {
+                    match view.lock().unwrap().status() {
+                        Status::WaitingForFrame => break,
+                        Status::Ended { detail, .. } => panic!("{detail}"),
+                        _ => {}
+                    }
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            send_update.send(color_frame([255, 0, 0, 255])).await?;
+            let before = wait_frame(&view, 0).await;
+
+            // Even, odd-and-too-small, and oversized requests: all sanitized and
+            // all silently dropped because the loopback server has no DVC.
+            for (width, height) in [(1024, 768), (999, 55), (5000, 3000)] {
+                input
+                    .send(vec![Input::Resize { width, height }])
+                    .await?;
+            }
+            send_update.send(color_frame([0, 255, 0, 255])).await?;
+            wait_frame(&view, before.revision).await;
+            assert!(matches!(view.lock().unwrap().status(), Status::Ready));
+            assert!(input.send(vec![Input::Key { scan_code: 0x1c, pressed: true }]).await.is_ok());
+
+            serve.abort();
+            let _ = serve.await;
+            sessions.disconnect(id);
+            Ok(())
+        })
+        .await
+}
+
 // ---------- Clipboard loopback (text + files, both directions) ----------
 
 const CLIPBOARD_REMOTE_TEXT: &str = "remote-clipboard-payload";
