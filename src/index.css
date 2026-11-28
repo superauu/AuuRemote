@@ -622,6 +622,62 @@
     color: hsl(var(--primary));
   }
 
+  .tab-menu {
+    position: fixed;
+    z-index: 80;
+    min-width: 200px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    border: 1px solid hsl(var(--input));
+    border-radius: 8px;
+    background: hsl(var(--card));
+    box-shadow: 0 14px 40px hsl(225 24% 4% / 0.28);
+    color: hsl(var(--foreground));
+    outline: none;
+  }
+
+  .tab-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: hsl(var(--foreground));
+  }
+
+  .tab-menu-item > svg {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .tab-menu-item:hover:not(:disabled),
+  .tab-menu-item:focus-visible:not(:disabled) {
+    background: hsl(var(--selection));
+    color: hsl(var(--primary));
+  }
+
+  .tab-menu-item:hover:not(:disabled) > svg,
+  .tab-menu-item:focus-visible:not(:disabled) > svg {
+    color: hsl(var(--primary));
+  }
+
+  .tab-menu-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .tab-menu-check {
+    width: 5px;
+    height: 5px;
+    flex: none;
+    border-radius: 50%;
+    background: hsl(var(--primary));
+  }
+
   @container (max-width: 570px) {
     .session-action {
       width: 28px;

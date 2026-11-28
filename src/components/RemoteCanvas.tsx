@@ -42,6 +42,7 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const lastResize = useRef<Position | undefined>(undefined);
+  const autoResizeRef = useRef(autoResize);
   const disconnectButton = useRef<HTMLButtonElement>(null);
   const pending = useRef<Input[]>([]);
   const sending = useRef(false);
@@ -69,6 +70,10 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
     }
   }, [active]);
 
+  useEffect(() => {
+    autoResizeRef.current = autoResize;
+  }, [autoResize]);
+
   const markEnded = useCallback((code: string | undefined, detail: string | undefined) => {
     if (!live.current) return;
     live.current = false;
@@ -91,6 +96,25 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
     } finally {
       sending.current = false;
     }
+  }, [id, markEnded]);
+
+  // Pushes a Display Control layout matching the canvas area. Called from the
+  // debounced resize observer and once right after the first frame, so an
+  // "auto" session fits the canvas exactly instead of the window estimate.
+  // Each push costs a session reactivation, so changes below 32px are skipped.
+  const pushResize = useCallback(() => {
+    const container = viewport.current;
+    if (!container || !autoResizeRef.current || !live.current || !hasFrame.current) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const { width, height } = fitSize(rect.width, rect.height);
+    const last = lastResize.current;
+    if (last && Math.abs(last.x - width) < 32 && Math.abs(last.y - height) < 32) return;
+    lastResize.current = { x: width, y: height };
+    invoke("rdp_input", { id, events: [{ type: "resize", width, height }] }).catch((error) => {
+      const api = error as { code?: string; detail?: string };
+      markEnded(api?.code, api?.detail ?? String(error));
+    });
   }, [id, markEnded]);
 
   const queue = useCallback((event: Input) => {
@@ -122,6 +146,7 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
     const renderer = context;
     let mounted = true;
     let after = 0;
+    let firstFrame = true;
     live.current = true;
 
     async function nextFrame() {
@@ -165,6 +190,11 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
           }
           renderer.putImageData(new ImageData(new Uint8ClampedArray(buffer, 8), width, height), 0, 0);
           hasFrame.current = true;
+          if (firstFrame) {
+            firstFrame = false;
+            // Exact-fit once frames flow; further pushes come from the observer.
+            if (autoResizeRef.current) pushResize();
+          }
         }
         timer.current = window.setTimeout(() => { void nextFrame(); }, activeRef.current ? 33 : 500);
       } catch (error) {
@@ -188,38 +218,25 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
       window.clearTimeout(timer.current);
       window.clearTimeout(scheduled.current);
     };
-  }, [id, markEnded]);
+  }, [id, markEnded, pushResize]);
 
   // "auto" sessions push a new Display Control layout once the canvas area
   // settles into a different size; the remote resizes itself and later frames
-  // arrive at the new dimensions. Each push costs a session reactivation, so
-  // the observer debounces and ignores sub-pixel jitter.
+  // arrive at the new dimensions.
   useEffect(() => {
     const container = viewport.current;
     if (!container || !autoResize) return;
     let scheduled = 0;
     const observer = new ResizeObserver(() => {
       window.clearTimeout(scheduled);
-      scheduled = window.setTimeout(() => {
-        if (!live.current || !hasFrame.current) return;
-        const rect = container.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return;
-        const { width, height } = fitSize(rect.width, rect.height);
-        const last = lastResize.current;
-        if (last && Math.abs(last.x - width) < 32 && Math.abs(last.y - height) < 32) return;
-        lastResize.current = { x: width, y: height };
-        invoke("rdp_input", { id, events: [{ type: "resize", width, height }] }).catch((error) => {
-          const api = error as { code?: string; detail?: string };
-          markEnded(api?.code, api?.detail ?? String(error));
-        });
-      }, 300);
+      scheduled = window.setTimeout(() => pushResize(), 300);
     });
     observer.observe(container);
     return () => {
       observer.disconnect();
       window.clearTimeout(scheduled);
     };
-  }, [autoResize, id, markEnded]);
+  }, [autoResize, pushResize]);
 
   useEffect(() => {
     const surface = canvas.current;
@@ -256,6 +273,12 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
     if (pressed && event.ctrlKey && event.altKey && (event.code === "Escape" || event.key === "Escape")) {
       event.preventDefault();
       disconnectButton.current?.focus();
+      return;
+    }
+    // F11 toggles the app window fullscreen locally (handled globally in App);
+    // it must not also reach the remote desktop.
+    if (event.key === "F11") {
+      event.preventDefault();
       return;
     }
     const code = scanCode(event);

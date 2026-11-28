@@ -13,6 +13,15 @@ use tauri::Manager;
 
 use rdp::clipboard::OsClipboard;
 
+/// Fullscreen toggling for the main window (tab context menu / F11).
+#[tauri::command]
+fn set_fullscreen(app: tauri::AppHandle, fullscreen: bool) -> Result<(), crate::errors::ApiError> {
+    app.get_webview_window("main")
+        .ok_or_else(|| crate::errors::ApiError::new(crate::errors::ErrorCode::Internal, "主窗口不存在。"))?
+        .set_fullscreen(fullscreen)
+        .map_err(|error| crate::errors::ApiError::chain(crate::errors::ErrorCode::Internal, &error, "无法切换全屏"))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -38,6 +47,7 @@ fn main() {
             rdp::rdp_frame,
             rdp::rdp_input,
             rdp::rdp_screenshot,
+            set_fullscreen,
             profiles::list_profiles,
             profiles::save_profile,
             profiles::remove_profile,

@@ -60,6 +60,19 @@ export const zh = {
   "tabs.title": "会话",
   "tabs.close": "关闭标签页",
   "tabs.noTabs": "连接后会话会以标签页打开。",
+  "tabs.renameTitle": "重命名标签页",
+  "tabs.renameLabel": "标签页名称",
+  "tabs.renameSubmit": "保存",
+  "tabs.renameCancel": "取消",
+
+  // Tab context menu
+  "menu.fullscreen": "全屏",
+  "menu.exitFullscreen": "退出全屏",
+  "menu.smartSize": "自适应窗口",
+  "menu.rename": "重命名标签页",
+  "menu.duplicate": "复制标签页",
+  "menu.reconnect": "重新连接",
+  "menu.disconnect": "断开",
 
   // Session view
   "session.connected": "已连接 · {width} × {height}",
@@ -94,6 +107,7 @@ export const zh = {
   "notice.saveFailed": "无法保存连接",
   "notice.removeFailed": "无法移除连接",
   "notice.disconnectFailed": "无法结束会话",
+  "notice.screenshotFailed": "无法保存截图",
   "notice.disconnected": "连接已断开",
   "notice.cancelled": "已取消连接",
   "notice.failed": "连接失败",

@@ -62,6 +62,19 @@ export const en: Record<keyof typeof zh, string> = {
   "tabs.title": "Sessions",
   "tabs.close": "Close tab",
   "tabs.noTabs": "Sessions open as tabs once you connect.",
+  "tabs.renameTitle": "Rename tab",
+  "tabs.renameLabel": "Tab name",
+  "tabs.renameSubmit": "Save",
+  "tabs.renameCancel": "Cancel",
+
+  // Tab context menu
+  "menu.fullscreen": "Full Screen",
+  "menu.exitFullscreen": "Exit Full Screen",
+  "menu.smartSize": "Smart Size",
+  "menu.rename": "Rename Tab",
+  "menu.duplicate": "Duplicate Tab",
+  "menu.reconnect": "Reconnect",
+  "menu.disconnect": "Disconnect",
 
   // Session view
   "session.connected": "Connected · {width} × {height}",
@@ -96,6 +109,7 @@ export const en: Record<keyof typeof zh, string> = {
   "notice.saveFailed": "Could not save the connection",
   "notice.removeFailed": "Could not remove the connection",
   "notice.disconnectFailed": "Could not end the session",
+  "notice.screenshotFailed": "Could not save the screenshot",
   "notice.disconnected": "Disconnected",
   "notice.cancelled": "Connection cancelled",
   "notice.failed": "Connection failed",

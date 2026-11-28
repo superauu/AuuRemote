@@ -1,12 +1,14 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { ArrowRight, MonitorUp } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { ConnectionPanel } from "./components/ConnectionPanel";
 import { ConfigPanel } from "./components/ConfigPanel";
 import { MasterPasswordDialog, type VaultDialogMode } from "./components/MasterPasswordDialog";
 import { PanelResizeHandle } from "./components/PanelResizeHandle";
 import { RemoteCanvas } from "./components/RemoteCanvas";
+import { RenameDialog } from "./components/RenameDialog";
 import { StatusBar } from "./components/StatusBar";
+import { TabMenu, type TabMenuAction, type TabMenuState } from "./components/TabMenu";
 import { TabStrip } from "./components/TabStrip";
 import { Toolbar } from "./components/Toolbar";
 import { asApiError, describeError } from "./errors";
@@ -39,6 +41,9 @@ export function App() {
   const [busy, setBusy] = useState<BusyState>();
   const [notice, setNotice] = useState<Notice>();
   const [configOpen, setConfigOpen] = useState(true);
+  const [tabMenu, setTabMenu] = useState<TabMenuState>();
+  const [rename, setRename] = useState<{ tabId: number; value: string }>();
+  const [fullscreen, setFullscreen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   const configToggle = useRef<HTMLButtonElement>(null);
   const hostField = useRef<HTMLInputElement>(null);
@@ -55,6 +60,7 @@ export function App() {
   const validDetails = !!draft.host.trim() && !!draft.username.trim() &&
     /^[0-9]+$/.test(draft.port) && Number(draft.port) > 0 && Number(draft.port) <= 65535;
   const openProfileIds = new Set(tabs.map((tab) => tab.profileId).filter((id) => id !== undefined));
+  const menuProfile = tabMenu && profiles.find((item) => item.id === tabMenu.tab.profileId);
   const panelBudget = viewportWidth - MIN_WORKSPACE_WIDTH;
   const visibleConfigWidth = Math.min(configWidth, Math.max(CONFIG_PANEL.min, panelBudget - CONNECTIONS_PANEL.min));
   const maxConnectionsWidth = Math.min(CONNECTIONS_PANEL.max, Math.max(
@@ -68,6 +74,25 @@ export function App() {
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
+
+  // Fullscreen owns F11: the key never reaches the remote desktop, so the
+  // toggle works from anywhere in the window.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "F11") {
+        event.preventDefault();
+        setFullscreen((current) => !current);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (!desktop) return;
+    if (fullscreen) setConfigOpen(false);
+    void invoke("set_fullscreen", { fullscreen }).catch(() => {});
+  }, [fullscreen]);
 
   useEffect(() => {
     if (configOpen && focusHostOnOpen.current) {
@@ -283,25 +308,79 @@ export function App() {
     setActiveTabId((current) => current === id ? remaining.at(-1)?.id : current);
   }
 
-  async function reconnect(tab: Tab) {
-    const profile = profiles.find((item) => item.id === tab.profileId);
-    void invoke("rdp_disconnect", { id: tab.id }).catch(() => {});
-    if (profile && vault?.unlocked && vault.profileIds.includes(profile.id)) {
-      try {
-        const pw = await invoke<string | null>("vault_get_password", { profileId: profile.id });
-        if (pw) {
-          const ok = await startSession(
-            { host: profile.host, port: profile.port, username: profile.username, fingerprint: profile.fingerprint, resolution: profile.resolution },
-            pw, profile.name, profile.id, tab.id,
-          );
-          if (ok) return;
-        }
-      } catch {
-        // Fall through to the manual path.
-      }
+  /** Connects using a profile's saved password when the vault allows it. */
+  async function startFromProfile(profile: Profile, replaceTabId?: number): Promise<boolean> {
+    if (!vault?.unlocked || !vault.profileIds.includes(profile.id)) return false;
+    try {
+      const pw = await invoke<string | null>("vault_get_password", { profileId: profile.id });
+      if (!pw) return false;
+      return await startSession(
+        { host: profile.host, port: profile.port, username: profile.username, fingerprint: profile.fingerprint, resolution: profile.resolution },
+        pw, profile.name, profile.id, replaceTabId,
+      );
+    } catch {
+      // Fall through to the manual path.
+      return false;
     }
+  }
+
+  async function reconnect(tab: Tab) {
+    void invoke("rdp_disconnect", { id: tab.id }).catch(() => {});
+    const profile = profiles.find((item) => item.id === tab.profileId);
+    if (profile && (await startFromProfile(profile, tab.id))) return;
     selectProfile(profile);
     setNotice({ kind: "info", titleKey: "notice.reenterPassword" });
+  }
+
+  /** Opens a second session for the same connection. */
+  async function duplicateTab(tab: Tab) {
+    const profile = profiles.find((item) => item.id === tab.profileId);
+    if (!profile) return;
+    if (await startFromProfile(profile)) return;
+    selectProfile(profile);
+    setNotice({ kind: "info", titleKey: "notice.reenterPassword" });
+  }
+
+  function toggleSmartSize(tab: Tab) {
+    if (tab.resolution === "auto") {
+      // Turning Smart Size off needs a fixed resolution to restore.
+      const fixed = profiles.find((item) => item.id === tab.profileId)?.resolution;
+      if (!fixed || fixed === "auto") return;
+      setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, resolution: fixed } : item)));
+    } else {
+      setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, resolution: "auto" } : item)));
+    }
+  }
+
+  async function screenshotTab(id: number) {
+    try {
+      if (await invoke<boolean>("rdp_screenshot", { id })) {
+        setNotice({ kind: "info", titleKey: "session.screenshotSaved" });
+      }
+    } catch (error) {
+      setNotice(failNotice("notice.screenshotFailed", error));
+    }
+  }
+
+  function submitRename(value: string) {
+    if (!rename) return;
+    const label = value.trim().slice(0, 80);
+    if (label) {
+      setTabs((current) => current.map((item) => (item.id === rename.tabId ? { ...item, label } : item)));
+    }
+    setRename(undefined);
+  }
+
+  function runTabAction(action: TabMenuAction, tab: Tab) {
+    switch (action) {
+      case "fullscreen": setFullscreen((current) => !current); break;
+      case "smartSize": toggleSmartSize(tab); break;
+      case "screenshot": void screenshotTab(tab.id); break;
+      case "rename": setRename({ tabId: tab.id, value: tab.label }); break;
+      case "duplicate": void duplicateTab(tab); break;
+      case "reconnect": void reconnect(tab); break;
+      case "disconnect": closeTab(tab.id, true); break;
+    }
   }
 
   /** TOFU: remember the presented certificate, then retry the connection. */
@@ -373,27 +452,31 @@ export function App() {
         onToggleConfig={() => setConfigOpen((open) => !open)}
       />
       <div className="flex min-h-0 flex-1">
-        <ConnectionPanel
-          profiles={profiles}
-          selectedId={selectedId}
-          openProfileIds={openProfileIds}
-          query={query}
-          onQuery={setQuery}
-          onSelect={selectProfile}
-          onNew={newConnection}
-          width={visibleConnectionsWidth}
-        />
-        <PanelResizeHandle
-          label={t("panel.resize.connections")}
-          value={visibleConnectionsWidth}
-          min={CONNECTIONS_PANEL.min}
-          max={maxConnectionsWidth}
-          defaultValue={CONNECTIONS_PANEL.fallback}
-          side="left"
-          onChange={setConnectionsWidth}
-        />
+        {!fullscreen && (
+          <>
+            <ConnectionPanel
+              profiles={profiles}
+              selectedId={selectedId}
+              openProfileIds={openProfileIds}
+              query={query}
+              onQuery={setQuery}
+              onSelect={selectProfile}
+              onNew={newConnection}
+              width={visibleConnectionsWidth}
+            />
+            <PanelResizeHandle
+              label={t("panel.resize.connections")}
+              value={visibleConnectionsWidth}
+              min={CONNECTIONS_PANEL.min}
+              max={maxConnectionsWidth}
+              defaultValue={CONNECTIONS_PANEL.fallback}
+              side="left"
+              onChange={setConnectionsWidth}
+            />
+          </>
+        )}
         <main className="workspace flex min-w-0 flex-1 flex-col">
-          <TabStrip tabs={tabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} />
+          <TabStrip tabs={tabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} onTabContextMenu={(tab, x, y) => setTabMenu({ tab, x, y })} />
           <div className="relative min-h-0 flex-1">
             {tabs.map((tab) => (
               <div
@@ -460,6 +543,23 @@ export function App() {
         />
       </div>
       <StatusBar sessionCount={tabs.length} vault={vault} />
+      {tabMenu && (
+        <TabMenu
+          menu={tabMenu}
+          fullscreen={fullscreen}
+          smartSize={tabMenu.tab.resolution === "auto"}
+          smartSizeLocked={!menuProfile || menuProfile.resolution === "auto"}
+          onClose={() => setTabMenu(undefined)}
+          onAction={runTabAction}
+        />
+      )}
+      {rename && (
+        <RenameDialog
+          initial={rename.value}
+          onSubmit={submitRename}
+          onClose={() => setRename(undefined)}
+        />
+      )}
       {vaultDialog && (
         <MasterPasswordDialog
           mode={vaultDialog}

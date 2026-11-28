@@ -1,13 +1,14 @@
 import { LayoutPanelTop, Monitor, X } from "lucide-react";
-import { type KeyboardEvent, useLayoutEffect, useRef } from "react";
+import { type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef } from "react";
 import { useI18n } from "../i18n";
 import type { Tab } from "../types";
 
-export function TabStrip({ tabs, activeTabId, onSelect, onClose }: {
+export function TabStrip({ tabs, activeTabId, onSelect, onClose, onTabContextMenu }: {
   tabs: Tab[];
   activeTabId?: number;
   onSelect: (id: number) => void;
   onClose: (id: number) => void;
+  onTabContextMenu?: (tab: Tab, x: number, y: number) => void;
 }) {
   const { t } = useI18n();
   const focusAfterClose = useRef(false);
@@ -40,6 +41,12 @@ export function TabStrip({ tabs, activeTabId, onSelect, onClose }: {
     focusTab(tabs[next].id);
   }
 
+  function tabContextMenu(tab: Tab, event: MouseEvent<HTMLDivElement>) {
+    if (!onTabContextMenu) return;
+    event.preventDefault();
+    onTabContextMenu(tab, event.clientX, event.clientY);
+  }
+
   return (
     <div className="panel-header workspace-header">
       <LayoutPanelTop size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
@@ -47,7 +54,12 @@ export function TabStrip({ tabs, activeTabId, onSelect, onClose }: {
       {tabs.length > 0 && (
         <div className="session-tabs" ref={tabList} role="tablist" aria-labelledby="session-heading">
           {tabs.map((tab, index) => (
-            <div key={tab.id} className="tab-chip" data-active={tab.id === activeTabId}>
+            <div
+              key={tab.id}
+              className="tab-chip"
+              data-active={tab.id === activeTabId}
+              onContextMenu={(event) => tabContextMenu(tab, event)}
+            >
               <button
                 type="button"
                 id={`session-tab-${tab.id}`}
