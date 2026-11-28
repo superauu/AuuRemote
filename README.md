@@ -40,4 +40,4 @@ npm run desktop:build
 
 ## 架构与边界
 
-Rust 独占 RDP 连接、解码器、输入队列、密码库加密和剪贴板通道；React 通过 Tauri 命令读取同一份远端帧、发送输入。所有命令错误以 `{code, detail}` 结构返回，由前端字典本地化。剪贴板为自研 Win32 后端（`rdp/clipboard/`）：独立消息泵线程监听本地变化，worker 以 eager 模式双向同步，远端文件经 FileContents 流式下载到应用缓存目录后以 CF_HDROP 放入本地剪贴板；`ironrdp-cliprdr` 负责 FDW 编解码、锁管理与远端文件名安全过滤。断线后旧会话 ID 立即失效。当前支持 TCP、经证书验证的 TLS 和 CredSSP；"自适应"会话在窗口/画布尺寸变化时通过 Display Control 通道推送新分辨率，并完成服务端触发的 Deactivation-Reactivation 序列（Windows 10+/Server 2016+，不支持该通道的服务器保持原分辨率）。暂未提供剪贴板文件夹递归、音频、自动重连和连接树文件夹层级。
+Rust 独占 RDP 连接、解码器、输入队列、密码库加密和剪贴板通道；React 通过 Tauri 命令读取同一份远端帧、发送输入。所有命令错误以 `{code, detail}` 结构返回，由前端字典本地化。剪贴板为自研 Win32 后端（`rdp/clipboard/`）：独立消息泵线程监听本地变化，worker 以 eager 模式双向同步，远端文件经 FileContents 流式下载到应用缓存目录后以 CF_HDROP 放入本地剪贴板；`ironrdp-cliprdr` 负责 FDW 编解码、锁管理与远端文件名安全过滤。断线后旧会话 ID 立即失效；已出画面的会话掉线时 worker 自动重试（1 秒间隔、最多 3 次，帧版本号跨重连保持递增），期间标签显示"正在重新连接"，连接失败的首次尝试不重试。当前支持 TCP、经证书验证的 TLS 和 CredSSP；"自适应"会话在窗口/画布尺寸变化时通过 Display Control 通道推送新分辨率，并完成服务端触发的 Deactivation-Reactivation 序列（Windows 10+/Server 2016+，不支持该通道的服务器保持原分辨率）。暂未提供剪贴板文件夹递归、音频和连接树文件夹层级。

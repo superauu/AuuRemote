@@ -35,10 +35,14 @@ type RdpStream = TokioFramed<TlsStream<TcpStream>>;
 type RdpReader = TokioFramed<ReadHalf<TlsStream<TcpStream>>>;
 type RdpWriter = TokioFramed<WriteHalf<TlsStream<TcpStream>>>;
 
+/// Auto-reconnect budget for a session that already showed a live desktop.
+const MAX_RECONNECTS: u32 = 3;
+const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+
 pub(super) async fn run(
     connection: Connection,
     fingerprint: Option<[u8; 32]>,
-    mut input: mpsc::Receiver<Vec<Input>>,
+    input: mpsc::Receiver<Vec<Input>>,
     clipboard: ClipboardLink,
     trusted: super::trust::TrustMap,
     view: &Mutex<View>,
@@ -51,6 +55,63 @@ pub(super) async fn run(
         state,
     } = clipboard;
     let mut clipboard_worker = super::clipboard::Worker::new(os, staging_root, state);
+    let mut input = input;
+    let mut reconnects_left: u32 = MAX_RECONNECTS;
+    // Frame revisions keep rising across reconnects so the canvas keeps
+    // pulling frames without a reset.
+    let mut revision: u32 = 0;
+
+    loop {
+        let before = revision;
+        let outcome = session_once(
+            connection.clone(),
+            fingerprint,
+            trusted.clone(),
+            cliprdr_factory.clone(),
+            &mut input,
+            &mut clipboard_worker,
+            &mut clipboard_rx,
+            view,
+            &mut revision,
+        )
+        .await;
+        // This attempt showed frames: the reconnect budget refills for the
+        // next drop, while a streak of failed attempts drains it.
+        if revision != before {
+            reconnects_left = MAX_RECONNECTS;
+        }
+        let retryable = outcome.is_err()
+            && view.lock().expect("view lock").established
+            && view.lock().expect("view lock").error.is_none()
+            && reconnects_left > 0;
+        match outcome {
+            Ok(()) => return Ok(()),
+            Err(error) if retryable => {
+                eprintln!("rdp: session dropped ({error}); auto-reconnecting");
+                reconnects_left -= 1;
+                view.lock().expect("view lock").reconnecting = true;
+                time::sleep(RECONNECT_DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// One full connect + active-session cycle. Only `Ok` when the user closed
+/// the tab (input channel closed); every protocol failure is an `Err` that
+/// the `run` wrapper may turn into an automatic retry.
+#[allow(clippy::too_many_arguments)]
+async fn session_once(
+    connection: Connection,
+    fingerprint: Option<[u8; 32]>,
+    trusted: super::trust::TrustMap,
+    cliprdr_factory: Option<super::clipboard::SharedCliprdrFactory>,
+    input: &mut mpsc::Receiver<Vec<Input>>,
+    clipboard_worker: &mut super::clipboard::Worker,
+    clipboard_rx: &mut mpsc::UnboundedReceiver<super::clipboard::CliprdrEvent>,
+    view: &Mutex<View>,
+    revision: &mut u32,
+) -> Result<(), ApiError> {
     let (result, stream) =
         time::timeout(
             Duration::from_secs(25),
@@ -58,7 +119,11 @@ pub(super) async fn run(
         )
         .await
         .map_err(|_| ApiError::new(ErrorCode::ConnectTimeout, "RDP 连接超时"))??;
-    view.lock().expect("view lock").established = true;
+    {
+        let mut latest = view.lock().expect("view lock");
+        latest.established = true;
+        latest.reconnecting = false;
+    }
     let activation_factory = result.activation_factory;
 
     let DesktopSize { mut width, mut height } = result.desktop_size;
@@ -92,7 +157,6 @@ pub(super) async fn run(
     let first_frame = time::sleep(Duration::from_secs(30));
     tokio::pin!(first_frame);
     let mut dirty = false;
-    let mut revision: u32 = 0;
 
     loop {
         let output = tokio::select! {
@@ -136,14 +200,14 @@ pub(super) async fn run(
             }
             _ = tick.tick() => {
                 if dirty {
-                    revision = revision.wrapping_add(1).max(1);
-                    let frame = Arc::new(make_frame(&image, revision));
+                    *revision = revision.wrapping_add(1).max(1);
+                    let frame = Arc::new(make_frame(&image, *revision));
                     view.lock().expect("view lock").frame = Some(frame);
                     dirty = false;
                 }
                 continue;
             }
-            _ = &mut first_frame, if revision == 0 => return Err(ApiError::new(
+            _ = &mut first_frame, if *revision == 0 => return Err(ApiError::new(
                 ErrorCode::ConnectionFailed,
                 "RDP 已建立，但未收到远端桌面画面。",
             )),

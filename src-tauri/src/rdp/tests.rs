@@ -242,14 +242,16 @@ async fn verify_loopback() -> anyhow::Result<()> {
     assert!(red <= 5 && green >= 250 && blue <= 5 && alpha == 255);
     serve.abort();
     let _ = serve.await;
+    // Auto-reconnect kicks in after a live desktop was shown; the worker only
+    // stops retrying once the session is dropped.
     time::timeout(Duration::from_secs(5), async {
-        while !matches!(view.lock().unwrap().status(), Status::Ended { .. }) {
+        while !matches!(view.lock().unwrap().status(), Status::Reconnecting) {
             time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await?;
-    assert!(sessions.frame(id).is_err());
     sessions.disconnect(id);
+    assert!(sessions.frame(id).is_err());
 
     let standby = TcpListener::bind(("127.0.0.1", 0)).await?;
     let next_id = start_session(
@@ -346,6 +348,103 @@ async fn resize_input_keeps_session_alive_without_display_control() -> anyhow::R
 
             serve.abort();
             let _ = serve.await;
+            sessions.disconnect(id);
+            Ok(())
+        })
+        .await
+}
+
+/// When the server side vanishes mid-session, the worker must reconnect
+/// automatically (same session id, revisions keep rising) once a new listener
+/// appears on the same address.
+#[tokio::test]
+async fn dropped_session_reconnects_to_a_new_server() -> anyhow::Result<()> {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
+            let address = listener.local_addr()?;
+            let identity = generate_simple_self_signed(vec!["localhost".to_owned()])?;
+            let certificate = identity.cert.der().clone();
+            let pin = format_fingerprint(&Sha256::digest(certificate.as_ref()).into());
+            let key_der = identity.signing_key.serialize_der();
+            let make_tls = |key_der: &[u8]| {
+                Ok::<_, anyhow::Error>(TlsAcceptor::from(Arc::new(
+                    ServerConfig::builder()
+                        .with_no_client_auth()
+                        .with_single_cert(vec![certificate.clone()], PrivatePkcs8KeyDer::from(key_der.to_vec()).into())?,
+                )))
+            };
+            let (send_update, updates) = mpsc::channel(2);
+            let mut server1 = RdpServer::builder()
+                .with_addr(address)
+                .with_tls(make_tls(&key_der)?)
+                .with_input_handler(InputLog(mpsc::unbounded_channel().0))
+                .with_display_handler(Display(Some(Updates(updates))))
+                .build();
+            let serve1 = tokio::task::spawn_local(async move {
+                let (stream, _) = listener.accept().await?;
+                server1.run_connection(stream).await
+            });
+            let sessions = Sessions::default();
+            let id = start_session(
+                &sessions,
+                Connection {
+                    endpoint: Endpoint {
+                        host: "127.0.0.1".to_owned(),
+                        port: address.port(),
+                        username: "fixture".to_owned(),
+                        fingerprint: pin.clone(),
+                    },
+                    password: "fixture-only".to_owned(),
+                    width: 1280,
+                    height: 800,
+                },
+                |_| ClipboardLink::unsupported(),
+                trust::TrustMap::new(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            let (view, _input) = sessions
+                .get(id, |session| Ok((session.view.clone(), session.input.clone())))
+                .map_err(anyhow::Error::msg)?;
+            time::timeout(Duration::from_secs(8), async {
+                loop {
+                    match view.lock().unwrap().status() {
+                        Status::WaitingForFrame => break,
+                        Status::Ended { detail, .. } => panic!("{detail}"),
+                        _ => {}
+                    }
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            send_update.send(color_frame([255, 0, 0, 255])).await?;
+            let red = wait_frame(&view, 0).await;
+
+            // Kill server 1; the worker retries while we stand up server 2 on
+            // the same port.
+            serve1.abort();
+            let _ = serve1.await;
+            let listener2 = TcpListener::bind(address).await?;
+            let (send_update2, updates2) = mpsc::channel(2);
+            let mut server2 = RdpServer::builder()
+                .with_addr(address)
+                .with_tls(make_tls(&key_der)?)
+                .with_input_handler(InputLog(mpsc::unbounded_channel().0))
+                .with_display_handler(Display(Some(Updates(updates2))))
+                .build();
+            let serve2 = tokio::task::spawn_local(async move {
+                let (stream, _) = listener2.accept().await?;
+                server2.run_connection(stream).await
+            });
+            send_update2.send(color_frame([0, 255, 0, 255])).await?;
+            let green = wait_frame(&view, red.revision).await;
+            let [red_byte, green_byte, blue_byte, alpha] = green.wire[8..12].try_into()?;
+            assert!(red_byte <= 5 && green_byte >= 250 && blue_byte <= 5 && alpha == 255);
+            assert!(matches!(view.lock().unwrap().status(), Status::Ready));
+
+            serve2.abort();
+            let _ = serve2.await;
             sessions.disconnect(id);
             Ok(())
         })

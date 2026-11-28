@@ -84,6 +84,7 @@ export const zh = {
   "session.connected": "已连接 · {width} × {height}",
   "session.connecting": "正在连接远端主机…",
   "session.waitingFrame": "会话已建立，正在接收首帧…",
+  "session.reconnecting": "连接已断开，正在重新连接…",
   "session.winR": "远端 Win+R",
   "session.screenshot": "保存截图",
   "session.screenshotSaved": "已保存远端截图。",

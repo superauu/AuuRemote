@@ -8,7 +8,7 @@ import { fitSize, type Tab } from "../types";
 
 type Position = { x: number; y: number };
 type SessionStatus =
-  | { state: "connecting" | "waitingForFrame" | "ready" }
+  | { state: "connecting" | "waitingForFrame" | "reconnecting" | "ready" }
   | { state: "ended"; code?: string; detail?: string };
 type Input =
   | ({ type: "move" } & Position)
@@ -54,7 +54,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
   const live = useRef(false);
   const hasFrame = useRef(false);
   const activeRef = useRef(active);
-  const [waitingForFrame, setWaitingForFrame] = useState(false);
+  const [pendingState, setPendingState] = useState<"connecting" | "waitingForFrame" | "reconnecting">("connecting");
   const [size, setSize] = useState<Position>();
   const [ended, setEnded] = useState<{ code?: string; detail?: string }>();
   const certificateFingerprint = ended?.code === "certificateMismatch"
@@ -166,7 +166,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
             return;
           }
           if (status.state !== "ready") {
-            setWaitingForFrame(status.state === "waitingForFrame");
+            setPendingState(status.state);
             timer.current = window.setTimeout(() => { void nextFrame(); }, 250);
             return;
           }
@@ -196,6 +196,7 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
           }
           renderer.putImageData(new ImageData(new Uint8ClampedArray(buffer, 8), width, height), 0, 0);
           hasFrame.current = true;
+          setPendingState("connecting");
           if (firstFrame) {
             firstFrame = false;
             // Exact-fit once frames flow; further pushes come from the observer.
@@ -317,15 +318,16 @@ export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconn
 
   const statusLine = ended
     ? describeError({ code: ended.code ?? "connectionFailed", detail: ended.detail ?? "" }, t)
+    : pendingState === "reconnecting" ? t("session.reconnecting")
     : size ? t("session.connected", { width: size.x, height: size.y })
-    : waitingForFrame ? t("session.waitingFrame") : t("session.connecting");
+    : pendingState === "waitingForFrame" ? t("session.waitingFrame") : t("session.connecting");
 
   return (
     <div className="flex h-full flex-col">
       <div className="session-toolbar flex h-10 shrink-0 items-center justify-between gap-2 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span
-            className={`state-dot ${ended ? "bg-ended" : size ? "bg-connected" : "bg-connecting animate-pulse-subtle"}`}
+            className={`state-dot ${ended ? "bg-ended" : size && pendingState !== "reconnecting" ? "bg-connected" : "bg-connecting animate-pulse-subtle"}`}
             aria-hidden="true"
           />
           <strong className="truncate font-mono text-xs font-medium" title={target}>{target}</strong>

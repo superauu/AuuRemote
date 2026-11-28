@@ -72,6 +72,8 @@ impl Drop for Session {
 #[derive(Default)]
 struct View {
     established: bool,
+    /** A live session dropped and the worker is retrying the connection. */
+    reconnecting: bool,
     frame: Option<Arc<Frame>>,
     error: Option<ApiError>,
 }
@@ -81,6 +83,7 @@ struct View {
 pub(crate) enum Status {
     Connecting,
     WaitingForFrame,
+    Reconnecting,
     Ready,
     Ended { code: ErrorCode, detail: String },
 }
@@ -92,6 +95,8 @@ impl View {
                 code: error.code,
                 detail: error.detail.clone(),
             }
+        } else if self.reconnecting {
+            Status::Reconnecting
         } else if self.frame.is_some() {
             Status::Ready
         } else if self.established {
@@ -123,7 +128,7 @@ impl Frame {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct Connection {
     #[serde(flatten)]
     endpoint: Endpoint,

@@ -86,6 +86,7 @@ export const en: Record<keyof typeof zh, string> = {
   "session.connected": "Connected · {width} × {height}",
   "session.connecting": "Connecting to the remote host…",
   "session.waitingFrame": "Session established, waiting for the first frame…",
+  "session.reconnecting": "Connection lost, reconnecting…",
   "session.winR": "Remote Win+R",
   "session.screenshot": "Save screenshot",
   "session.screenshotSaved": "Remote screenshot saved.",
