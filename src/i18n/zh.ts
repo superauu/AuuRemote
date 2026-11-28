@@ -10,6 +10,7 @@ export const zh = {
   "toolbar.theme.light": "浅色",
   "toolbar.theme.system": "跟随系统",
   "toolbar.language": "切换语言",
+  "window.statusbar": "状态栏",
   "toolbar.windowControls": "窗口控制",
   "toolbar.minimize": "最小化",
   "toolbar.maximize": "最大化",

@@ -52,6 +52,8 @@
     --state-connecting: 35 88% 34%;
     --state-ended: 348 69% 40%;
     --dialog-scrim: hsl(217 31% 15% / 0.28);
+    --glass-divider: hsl(var(--border) / 0.55);
+    --glass-highlight: rgba(255, 255, 255, 0.5);
   }
 
   .dark {
@@ -75,6 +77,8 @@
     --state-connecting: 40 86% 66%;
     --state-ended: 348 79% 75%;
     --dialog-scrim: hsl(225 24% 4% / 0.64);
+    --glass-divider: hsl(var(--border) / 0.55);
+    --glass-highlight: rgba(255, 255, 255, 0.045);
   }
 
   body {
@@ -143,9 +147,18 @@
   }
 
   .brand-mark {
-    color: hsl(var(--primary));
-    font: 700 14px/20px "Orbitron Variable", var(--font-sans);
-    letter-spacing: 0.035em;
+    font: 700 12px/16px "Orbitron Variable", var(--font-sans);
+    letter-spacing: 0.14em;
+    background: linear-gradient(to right, hsl(193 76% 40%), hsl(199 89% 48%));
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  .dark .brand-mark {
+    background: linear-gradient(to right, hsl(187 72% 79%), hsl(199 88% 66%));
+    background-clip: text;
+    -webkit-background-clip: text;
   }
 
   .toolbar-divider {
@@ -380,80 +393,102 @@
     background: hsl(var(--background));
   }
 
-  .workspace-header {
-    padding-inline-start: 14px;
-  }
-
-  .session-tabs {
+  /* Title-bar tab strip (auugit glass-tabbar style). */
+  .titlebar-tabs {
     display: flex;
-    align-self: stretch;
-    align-items: end;
+    align-items: center;
     gap: 4px;
-    margin-inline-start: 6px;
     min-width: 0;
-    padding-inline: 3px;
-    overflow: auto hidden;
+    overflow-x: auto;
     scrollbar-width: none;
   }
 
-  .tab-chip {
+  .titlebar-tab {
     display: flex;
     align-items: center;
-    flex: 0 0 auto;
-    height: 31px;
-    max-width: 204px;
-    padding-inline-end: 4px;
+    gap: 8px;
+    flex: none;
+    height: 28px;
+    max-width: 240px;
+    padding: 0 8px 0 10px;
     border: 1px solid transparent;
-    border-bottom: 0;
-    border-radius: 6px 6px 0 0;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .tab-chip:hover {
-    background: hsl(var(--accent));
-  }
-
-  .tab-chip[data-active="true"] {
-    border-color: hsl(var(--border));
-    border-top-color: hsl(var(--primary));
-    background: hsl(var(--selection));
-    color: hsl(var(--foreground));
-  }
-
-  .tab-select, .tab-close {
-    display: inline-flex;
-    align-items: center;
-    border-radius: 4px;
-  }
-
-  .tab-select {
-    gap: 6px;
-    height: 26px;
-    min-width: 0;
-    padding: 0 6px 0 8px;
+    border-radius: 8px;
     font-size: 12px;
-    font-weight: 550;
+    color: hsl(var(--muted-foreground));
+    transition: background-color 150ms, color 150ms;
+    user-select: none;
   }
 
-  .tab-select[aria-selected="true"] svg {
+  .titlebar-tab:hover {
+    background: hsl(var(--foreground) / 0.04);
+  }
+
+  .titlebar-tab[data-active="true"] {
+    background: hsl(var(--foreground) / 0.07);
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+
+  .titlebar-tab[data-active="true"] > svg {
+    color: hsl(var(--primary));
+  }
+
+  .titlebar-tab-branch {
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    background: hsl(var(--foreground) / 0.05);
+    color: hsl(var(--muted-foreground));
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .titlebar-tab[data-active="true"] .titlebar-tab-branch {
+    background: hsl(var(--primary) / 0.1);
     color: hsl(var(--primary));
   }
 
   .tab-close {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
     flex: none;
-    width: 22px;
-    height: 22px;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
     color: hsl(var(--muted-foreground));
+    opacity: 0;
+    transition: opacity 120ms;
+  }
+
+  .titlebar-tab:hover .tab-close,
+  .titlebar-tab[data-active="true"] .tab-close {
+    opacity: 0.7;
   }
 
   .tab-close:hover {
-    background: hsl(var(--primary) / 0.12);
+    opacity: 1;
+    background: hsl(var(--foreground) / 0.08);
     color: hsl(var(--foreground));
   }
 
-  .tab-select:focus-visible, .tab-close:focus-visible {
-    outline-offset: -2px;
+  .tab-new {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    color: hsl(var(--muted-foreground));
+    transition: background-color 120ms, color 120ms;
+  }
+
+  .tab-new:hover {
+    background: hsl(var(--foreground) / 0.06);
+    color: hsl(var(--foreground));
   }
 
   .empty-workspace {
@@ -585,6 +620,27 @@
     border-top: 1px solid hsl(var(--border));
   }
 
+  /* auugit glass statusbar: hairline divider plus a faint top highlight. */
+  .statusbar {
+    border-top-color: var(--glass-divider);
+    box-shadow: inset 0 1px 0 var(--glass-highlight);
+  }
+
+  .statusbar-segment {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    min-width: 0;
+  }
+
+  .statusbar-separator {
+    width: 1px;
+    height: 12px;
+    flex: none;
+    background: hsl(var(--border));
+  }
+
   .session-footer > span {
     flex: none;
     max-width: 43%;
@@ -678,29 +734,35 @@
     background: hsl(var(--primary));
   }
 
-  /* Frameless-window controls living at the right end of the app toolbar. */
+  /* Frameless-window controls living at the right end of the title bar. */
   .window-controls {
     display: flex;
     align-items: stretch;
     align-self: stretch;
-    margin-right: -12px;
+    border-left: 1px solid var(--glass-divider);
   }
 
   .window-btn {
-    width: 42px;
+    width: 46px;
     display: grid;
     place-items: center;
-    color: hsl(var(--muted-foreground));
+    color: hsl(var(--foreground) / 0.85);
+    transition: background-color 120ms, color 120ms;
   }
 
   .window-btn:hover {
-    background: hsl(var(--muted));
+    background: hsl(var(--foreground) / 0.08);
     color: hsl(var(--foreground));
   }
 
   .window-btn.close:hover {
-    background: hsl(var(--destructive));
-    color: hsl(var(--primary-foreground));
+    background: #c42b1c;
+    color: white;
+  }
+
+  .window-btn:focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: -3px;
   }
 
   @container (max-width: 570px) {
@@ -743,7 +805,7 @@
   }
 
   @media (forced-colors: active) {
-    .conn-row[aria-pressed="true"], .tab-chip[data-active="true"], .icon-btn[aria-expanded="true"] {
+    .conn-row[aria-pressed="true"], .titlebar-tab[data-active="true"], .icon-btn[aria-expanded="true"] {
       border-color: Highlight;
     }
 

@@ -27,12 +27,14 @@ function toRemote(canvas: HTMLCanvasElement, clientX: number, clientY: number): 
   };
 }
 
-export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnect, onTrustCertificate }: {
+export function RemoteCanvas({ tab, active, autoResize, onSessionSize, onDisconnect, onReconnect, onTrustCertificate }: {
   tab: Tab;
   /** Only the active tab pulls frames; background tabs poll status at a low rate. */
   active: boolean;
   /** "auto" sessions follow the canvas size by pushing Display Control layouts. */
   autoResize: boolean;
+  /** Reports the live remote framebuffer size for the status bar. */
+  onSessionSize?: (id: number, size: { x: number; y: number } | undefined) => void;
   onDisconnect: (id: number, hadFrame: boolean) => void;
   onReconnect: (tab: Tab) => void;
   onTrustCertificate: (tab: Tab, fingerprint: string) => void;
@@ -73,6 +75,10 @@ export function RemoteCanvas({ tab, active, autoResize, onDisconnect, onReconnec
   useEffect(() => {
     autoResizeRef.current = autoResize;
   }, [autoResize]);
+
+  useEffect(() => {
+    onSessionSize?.(id, ended ? undefined : size);
+  }, [id, size, ended, onSessionSize]);
 
   const markEnded = useCallback((code: string | undefined, detail: string | undefined) => {
     if (!live.current) return;

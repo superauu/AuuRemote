@@ -9,7 +9,6 @@ import { RemoteCanvas } from "./components/RemoteCanvas";
 import { RenameDialog } from "./components/RenameDialog";
 import { StatusBar } from "./components/StatusBar";
 import { TabMenu, type TabMenuAction, type TabMenuState } from "./components/TabMenu";
-import { TabStrip } from "./components/TabStrip";
 import { Toolbar } from "./components/Toolbar";
 import { asApiError, describeError } from "./errors";
 import { type TranslationKey, useI18n } from "./i18n";
@@ -44,6 +43,7 @@ export function App() {
   const [tabMenu, setTabMenu] = useState<TabMenuState>();
   const [rename, setRename] = useState<{ tabId: number; value: string }>();
   const [fullscreen, setFullscreen] = useState(false);
+  const [sessionSizes, setSessionSizes] = useState<Record<number, { x: number; y: number } | undefined>>({});
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   const configToggle = useRef<HTMLButtonElement>(null);
   const hostField = useRef<HTMLInputElement>(null);
@@ -305,6 +305,11 @@ export function App() {
     }, () => {});
     const remaining = tabs.filter((tab) => tab.id !== id);
     setTabs(remaining);
+    setSessionSizes((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     setActiveTabId((current) => current === id ? remaining.at(-1)?.id : current);
   }
 
@@ -340,6 +345,11 @@ export function App() {
     selectProfile(profile);
     setNotice({ kind: "info", titleKey: "notice.reenterPassword" });
   }
+
+  /** Receives live framebuffer sizes from each session for the status bar. */
+  const handleSessionSize = useCallback((id: number, size: { x: number; y: number } | undefined) => {
+    setSessionSizes((current) => (current[id] === size ? current : { ...current, [id]: size }));
+  }, []);
 
   function toggleSmartSize(tab: Tab) {
     if (tab.resolution === "auto") {
@@ -444,9 +454,14 @@ export function App() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <Toolbar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelect={setActiveTabId}
+        onCloseTab={closeTab}
+        onTabContextMenu={(tab, x, y) => setTabMenu({ tab, x, y })}
+        onNew={newConnection}
         vault={vault}
         onOpenVault={openVault}
-        onNew={newConnection}
         configOpen={configOpen}
         configToggle={configToggle}
         onToggleConfig={() => setConfigOpen((open) => !open)}
@@ -476,7 +491,6 @@ export function App() {
           </>
         )}
         <main className="workspace flex min-w-0 flex-1 flex-col">
-          <TabStrip tabs={tabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} onTabContextMenu={(tab, x, y) => setTabMenu({ tab, x, y })} />
           <div className="relative min-h-0 flex-1">
             {tabs.map((tab) => (
               <div
@@ -487,7 +501,7 @@ export function App() {
                 hidden={tab.id !== activeTabId}
                 className="absolute inset-0"
               >
-                <RemoteCanvas tab={tab} active={tab.id === activeTabId} autoResize={tab.resolution === "auto"} onDisconnect={closeTab} onReconnect={reconnect} onTrustCertificate={(tab, fingerprint) => void trustCertificate(tab, fingerprint)} />
+                <RemoteCanvas tab={tab} active={tab.id === activeTabId} autoResize={tab.resolution === "auto"} onSessionSize={handleSessionSize} onDisconnect={closeTab} onReconnect={reconnect} onTrustCertificate={(tab, fingerprint) => void trustCertificate(tab, fingerprint)} />
               </div>
             ))}
             {tabs.length === 0 && (
@@ -542,7 +556,12 @@ export function App() {
           width={visibleConfigWidth}
         />
       </div>
-      <StatusBar sessionCount={tabs.length} vault={vault} />
+      <StatusBar
+        activeTab={tabs.find((tab) => tab.id === activeTabId)}
+        sessionSize={activeTabId !== undefined ? sessionSizes[activeTabId] : undefined}
+        sessionCount={tabs.length}
+        vault={vault}
+      />
       {tabMenu && (
         <TabMenu
           menu={tabMenu}

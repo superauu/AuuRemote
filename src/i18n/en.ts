@@ -12,6 +12,7 @@ export const en: Record<keyof typeof zh, string> = {
   "toolbar.theme.light": "Light",
   "toolbar.theme.system": "System",
   "toolbar.language": "Switch language",
+  "window.statusbar": "Status bar",
   "toolbar.windowControls": "Window controls",
   "toolbar.minimize": "Minimize",
   "toolbar.maximize": "Maximize",
