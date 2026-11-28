@@ -427,6 +427,11 @@ async fn connect(
             .build_cliprdr_backend();
         connector.attach_static_channel(CliprdrClient::new(backend));
     }
+    // Audio playback: the server streams wave blocks; the cpal backend plays
+    // them on the default output device (PCM 44.1 kHz stereo).
+    connector.attach_static_channel(ironrdp::rdpsnd::client::Rdpsnd::new(Box::new(
+        ironrdp_rdpsnd_native::cpal::RdpsndBackend::new(),
+    )));
     let upgrade = ironrdp_tokio::connect_begin(&mut stream, &mut connector)
         .await
         .map_err(|error| ApiError::chain(ErrorCode::ConnectionFailed, &error, "RDP 协商失败"))?;
@@ -553,7 +558,7 @@ fn client_config(
         hardware_id: None,
         request_data: None,
         autologon: true,
-        enable_audio_playback: false,
+        enable_audio_playback: true,
         performance_flags: Default::default(),
         license_cache: None,
         timezone_info: Default::default(),
