@@ -678,6 +678,31 @@
     background: hsl(var(--primary));
   }
 
+  /* Frameless-window controls living at the right end of the app toolbar. */
+  .window-controls {
+    display: flex;
+    align-items: stretch;
+    align-self: stretch;
+    margin-right: -12px;
+  }
+
+  .window-btn {
+    width: 42px;
+    display: grid;
+    place-items: center;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .window-btn:hover {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .window-btn.close:hover {
+    background: hsl(var(--destructive));
+    color: hsl(var(--primary-foreground));
+  }
+
   @container (max-width: 570px) {
     .session-action {
       width: 28px;

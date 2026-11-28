@@ -10,6 +10,11 @@ export const zh = {
   "toolbar.theme.light": "浅色",
   "toolbar.theme.system": "跟随系统",
   "toolbar.language": "切换语言",
+  "toolbar.windowControls": "窗口控制",
+  "toolbar.minimize": "最小化",
+  "toolbar.maximize": "最大化",
+  "toolbar.restore": "还原",
+  "toolbar.close": "关闭",
 
   // Connection panel
   "panel.connections": "已保存的连接",

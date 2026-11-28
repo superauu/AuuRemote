@@ -12,6 +12,11 @@ export const en: Record<keyof typeof zh, string> = {
   "toolbar.theme.light": "Light",
   "toolbar.theme.system": "System",
   "toolbar.language": "Switch language",
+  "toolbar.windowControls": "Window controls",
+  "toolbar.minimize": "Minimize",
+  "toolbar.maximize": "Maximize",
+  "toolbar.restore": "Restore",
+  "toolbar.close": "Close",
 
   // Connection panel
   "panel.connections": "Saved connections",
